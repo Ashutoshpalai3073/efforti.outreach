@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% set active_nav = 'leads' %}
+{% block title %}Leads{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="row">
+    <h1>Leads</h1>
+    {% if active_mb %}<span class="scope-pill">Sending as {{active_mb.email}}</span>{% endif %}
+  </div>
+  <p class="sub">Pull C-suite contacts straight from Apollo, let AI write a personalized opener for each, then enroll.{% if active_mb %} Showing this mailbox's leads plus the shared verified pool available to enroll into it.{% else %} Bad syntax, dead domains, suppressed emails and duplicate companies are filtered automatically.{% endif %}</p>
+</div>
+
+{% if import_result %}
+  {% if import_result.error == 'no_email_column' %}
+  <div class="note-box" style="background:var(--bad-soft);border-color:color-mix(in srgb,var(--bad) 35%,transparent);margin-bottom:22px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="var(--bad)"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+    <span><strong>Couldn't import{% if import_result.filename %} {{import_result.filename}}{% endif %} — no <code>Email</code> column found.</strong><br>
+      Your file's columns:
+      {% for h in import_result.headers %}<code>{{h}}</code> {% else %}<span class="muted">(none detected — is it a valid CSV?)</span>{% endfor %}<br>
+      Add or rename a column to <code>Email</code> (also accepts “Email Address”), then re-upload. Recommended alongside it: First Name, Company, Title, Website, Trigger.</span>
+  </div>
+  {% else %}
+  {% set sk = import_result.skipped_invalid + import_result.skipped_suppressed + import_result.skipped_duplicate + import_result.skipped_domain_dupe %}
+  <div class="note-box" style="background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);margin-bottom:22px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)"><path d="M20 6 9 17l-5-5"/></svg>
+    <span><strong style="color:var(--ok)">Imported {{import_result.imported}}{% if import_result.filename %} from {{import_result.filename}}{% endif %}.</strong>
+      {{sk}} skipped ({{import_result.skipped_invalid}} invalid/no-email · {{import_result.skipped_duplicate}} duplicate · {{import_result.skipped_domain_dupe}} same company · {{import_result.skipped_suppressed}} suppressed).<br>
+      <span style="display:inline-flex;gap:5px;flex-wrap:wrap;margin-top:6px;align-items:center">Columns detected:
+      {% for f in import_result.detected_fields %}<span class="tag verified">{{ f.replace('_',' ')|title }}</span>{% endfor %}</span>
+      {% if import_result.missing_recommended %}<br><span class="muted" style="margin-top:4px;display:inline-block">Not in your file (optional — weakens personalization): {% for f in import_result.missing_recommended %}{{ f.replace('_',' ')|title }}{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}</span>
+  </div>
+  {% endif %}
+{% endif %}
+
+{% if pull_result %}
+<div class="note-box" style="background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);margin-bottom:22px">
+  <svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)"><path d="M20 6 9 17l-5-5"/></svg>
+  <span><strong style="color:var(--ok)">Imported {{pull_result.imported}} of {{pull_result.requested}} requested.</strong>
+  Scanned {{pull_result.fetched}} contacts · {{pull_result.dupe}} duplicate {{'company' if pull_result.dupe==1 else 'companies'}} skipped · {{pull_result.no_email}} without an email.
+  {% if pull_result.exhausted and pull_result.imported < pull_result.requested %}<br><strong>Pool exhausted for these filters</strong> — broaden the keywords/locations or headcount range to find more.{% endif %}</span>
+</div>
+{% endif %}
+
+<div class="grid">
+  <div class="card">
+    <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Pull from Apollo</h2>
+    <form method="post">
+      <label>Keywords <span class="muted">(comma-separated, optional)</span></label>
+      <input type="text" name="keywords" placeholder="saas, fintech, remote-first">
+      <label>Locations <span class="muted">(optional)</span></label>
+      <input type="text" name="locations" placeholder="India, United States">
+      <label>How many leads to import</label>
+      <input type="number" name="count" value="25" min="1" max="200">
+      <p class="muted" style="margin-top:5px;font-size:12px">It keeps searching until it gets you this many new, unique, emailable leads — then stops (so you don't over-spend credits).</p>
+      <div class="note-box" style="background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 25%,transparent)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span>Default ICP: CEO / Founder / Chief of Staff, 30–200 employees. <strong>Preview is free</strong> — revealing emails on import uses ~1 Apollo credit each.</span>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px">
+        <button class="btn ghost" formaction="/leads/apollo_preview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>Preview</button>
+        <button class="btn" formaction="/leads/apollo_pull"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Pull &amp; import</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>Import CSV</h2>
+    <form method="post" action="/leads/import" enctype="multipart/form-data">
+      <label>CSV file <span class="muted">— required column: <code>Email</code></span></label>
+      <input type="file" name="file" accept=".csv" required>
+      <p class="muted" style="margin-top:5px;font-size:12px">The header row is checked on upload. Recommended columns for personalization: First Name, Company, Title, Website, Trigger.</p>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:500;margin-top:14px">
+        <input type="checkbox" name="mx_check" checked style="width:auto"> Verify domains (MX check) on import
+      </label>
+      <div style="margin-top:18px"><button class="btn ghost">Import leads</button></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg>Generate AI openers</h2>
+    <form method="post" action="/leads/enrich">
+      <input type="hidden" name="limit" value="500">
+      <p class="muted" style="margin-bottom:4px;line-height:1.55">Writes one personalized first line for every <strong style="color:var(--text-2)">verified</strong> lead that doesn't have one yet, using your configured LLM (Groq or Claude). Falls back to a safe generic line if no key is set.</p>
+      <div style="margin-top:18px"><button class="btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m12 3 1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3Z"/></svg>Generate openers</button></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z"/></svg>Enroll verified leads</h2>
+    {% if mailbox_count == 0 %}
+      <div class="empty" style="padding:20px 0"><p>Add a <a href="/mailboxes">mailbox</a> first.</p></div>
+    {% else %}
+    <form method="post" action="/leads/enroll">
+      <label>Sequence</label>
+      <select name="sequence_id">
+        {% for s in sequences %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}
+      </select>
+      <p class="muted" style="margin-top:12px;line-height:1.55">Enrolls all {{verified_pool}} “verified” leads{% if active_mb %} into <strong style="color:var(--text-2)">{{active_mb.email}}</strong>{% else %}, round-robin across active mailboxes{% endif %}, staggered across days to respect warm-up caps.</p>
+      <div style="margin-top:16px"><button class="btn">Enroll all verified</button></div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if preview %}
+<h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>Apollo preview <span class="hint">no credits spent</span></h2>
+{% if preview.error %}
+<div class="note-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><span>Apollo error: {{preview.error}}</span></div>
+{% else %}
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+    <div><span style="font-size:28px;font-weight:750">{{preview.total}}</span> <span class="muted">contacts found</span></div>
+    <div><span style="font-size:28px;font-weight:750;color:var(--accent-ink)">{{preview.with_email}}</span> <span class="muted">have an email</span></div>
+    <form method="post" action="/leads/apollo_pull" style="margin-left:auto">
+      <input type="hidden" name="keywords" value="{{preview_filters.keywords}}">
+      <input type="hidden" name="locations" value="{{preview_filters.locations}}">
+      <input type="hidden" name="count" value="{{preview.with_email}}">
+      <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Import these — reveal {{preview.with_email}} emails (~{{preview.with_email}} credits)</button>
+    </form>
+  </div>
+</div>
+<div class="tbl" style="margin-bottom:32px"><table>
+  <thead><tr><th>First name</th><th>Brand</th><th>Position</th><th>Email available</th></tr></thead>
+  <tbody>
+  {% for p in preview.people %}
+  <tr>
+    <td>{{p.first_name}}</td>
+    <td>{{p.company}}</td>
+    <td class="muted">{{p.title}}</td>
+    <td>{% if p.has_email %}<span class="tag active">yes</span>{% else %}<span class="tag">no email</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+{% endif %}
+
+<h2>All leads
+  {% if status_filter %}<span class="hint">· filtered: {{status_filter}} · <a href="/leads">clear</a></span>{% endif %}
+</h2>
+<div class="chips">
+  <a href="/leads" class="{{'on' if not status_filter}}">all</a>
+  {% for s in ['verified','enrolled','contacted','replied','bounced','unsubscribed','finished'] %}
+  <a href="/leads?status={{s}}" class="{{'on' if status_filter==s}}">{{s}}</a>
+  {% endfor %}
+</div>
+<div class="tbl"><table>
+  <thead><tr><th>Email</th><th>Name</th><th>Title</th><th>Company</th><th>Opener</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for l in leads %}
+  <tr>
+    <td>{{l.email}}</td>
+    <td>{{l.first_name}} {{l.last_name}}</td>
+    <td class="muted">{{l.title}}</td>
+    <td>{{l.company}} <span class="muted">{{l.company_size}}</span></td>
+    <td class="muted" style="max-width:360px">{{l.opener or l.trigger}}</td>
+    <td><span class="tag {{l.status}}">{{l.status}}</span></td>
+    <td style="text-align:right"><form class="inline" method="post" action="/leads/{{l.id}}/suppress">
+        <button class="btn danger sm" title="Never contact">Suppress</button></form></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7"><div class="empty">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+    <p>No leads yet — pull from Apollo or import a CSV above.</p></div></td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

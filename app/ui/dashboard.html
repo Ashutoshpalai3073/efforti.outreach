@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% set active_nav = 'dash' %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="row">
+    <h1>Dashboard</h1>
+    {% if active_mb %}<span class="scope-pill">Sending as {{active_mb.email}}</span>{% endif %}
+  </div>
+  <p class="sub">{% if active_mb %}This mailbox's book of business — its leads, sends, replies and health.{% else %}All mailboxes combined. Replies are the only metric that matters — everything else is a leading indicator.{% endif %}</p>
+</div>
+
+<!-- Stat tiles -->
+<div class="tiles">
+  <div class="tile">
+    <div class="tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Leads</div>
+    <div class="num">{{funnel.leads}}</div>
+    <div class="note">{{funnel.enrolled}} enrolled in sequences</div>
+  </div>
+  <div class="tile">
+    <div class="tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>Emails sent</div>
+    <div class="num">{{sent_total}}</div>
+    <div class="note">{{funnel.contacted}} leads contacted</div>
+  </div>
+  <div class="tile accent">
+    <div class="tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg>Replies</div>
+    <div class="num">{{funnel.replied}}</div>
+    <div class="note">where the deals are — reply fast</div>
+  </div>
+  <div class="tile">
+    <div class="tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18M6 6l12 12"/></svg>Bounced / opted out</div>
+    <div class="num">{{bounced + unsubbed}}</div>
+    <div class="note">{{bounced}} bounced · {{unsubbed}} unsubscribed</div>
+  </div>
+</div>
+
+<!-- Funnel -->
+<h2>Conversion funnel</h2>
+<div class="funnel">
+  {% set stages = [('Leads', funnel.leads), ('Enrolled', funnel.enrolled),
+                   ('Contacted', funnel.contacted), ('Replied', funnel.replied)] %}
+  {% set top = funnel.leads if funnel.leads else 1 %}
+  {% for name, val in stages %}
+  <div class="fstage">
+    <div class="fnum">{{val}}</div>
+    <div class="flabel">{{name}}</div>
+    <div class="fbar"><span style="width:{{ (val / top * 100) if top else 0 }}%"></span></div>
+  </div>
+  {% endfor %}
+</div>
+<div class="funnel-foot">
+  <span>Emails sent <strong>{{sent_total}}</strong></span>
+  <span>Bounced <strong style="{{'color:var(--bad)' if bounced}}">{{bounced}}</strong></span>
+  <span>Unsubscribed <strong>{{unsubbed}}</strong></span>
+  <form class="inline" method="post" action="/run/sends" style="margin-left:auto">
+    <button class="btn ghost sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 3l14 9-14 9V3Z"/></svg>Run send cycle now</button>
+  </form>
+</div>
+
+{% if replies %}
+<h2>Latest replies <span class="hint">act on these today</span></h2>
+<div class="tbl"><table><tbody>
+  {% for r in replies %}
+  <tr><td class="muted mono" style="width:150px">{{r.created_at.strftime('%d %b · %H:%M')}}</td>
+      <td>{{r.detail}}</td></tr>
+  {% endfor %}
+</tbody></table></div>
+{% endif %}
+
+<h2>Mailbox health</h2>
+{% if mailboxes %}
+<div class="tbl"><table>
+  <thead><tr><th>Mailbox</th><th>Status</th><th>Sent today</th><th>Cap (warm-up)</th><th>7-day bounce</th></tr></thead>
+  <tbody>
+  {% for m in mailboxes %}
+  <tr>
+    <td>{{m.email}}</td>
+    <td>{% if m.active %}<span class="tag active">active</span>
+        {% else %}<span class="tag paused">paused</span>{% if m.paused_reason %}<div class="sub-line">{{m.paused_reason}}</div>{% endif %}{% endif %}</td>
+    <td class="mono">{{m.sent_today}}</td>
+    <td class="mono">{{m.effective_cap()}} <span class="muted">/ {{m.daily_cap}}</span></td>
+    <td class="mono" style="{{'color:var(--bad);font-weight:600' if m.bounce_rate() > 0.03}}">{{'%.1f'|format(m.bounce_rate()*100)}}%</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="card"><div class="empty">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m22 7-10 5L2 7"/></svg>
+  <p>No mailboxes yet. <a href="/mailboxes">Add your first sending mailbox</a> — use a lookalike domain, never your product domain.</p>
+</div></div>
+{% endif %}
+
+<h2>Recent activity</h2>
+<div class="tbl"><table><tbody>
+  {% for e in recent %}
+  <tr><td class="muted mono" style="width:150px">{{e.created_at.strftime('%d %b · %H:%M')}}</td>
+      <td style="width:96px"><span class="tag {{e.kind}}">{{e.kind}}</span></td>
+      <td>{{e.detail}}</td></tr>
+  {% else %}
+  <tr><td class="empty">Nothing yet — pull some leads to get started.</td></tr>
+  {% endfor %}
+</tbody></table></div>
+{% endblock %}

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% set active_nav = 'analytics' %}
+{% block title %}Analytics{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="row">
+    <h1>Analytics</h1>
+    {% if active_mb %}<span class="scope-pill">Sending as {{active_mb.email}}</span>{% endif %}
+  </div>
+  <p class="sub">Real, first-party performance — sends, follow-ups, replies and response time, computed live from your records. Reply rate is the metric that matters; opens/CTR aren't tracked (unreliable and bad for deliverability).</p>
+</div>
+
+<!-- Headline metrics -->
+<div class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(155px,1fr))">
+  <div class="tile">
+    <div class="tl">Emails sent</div>
+    <div class="num">{{a.sent_total}}</div>
+    <div class="note">{{a.contacted}} people contacted</div>
+  </div>
+  <div class="tile">
+    <div class="tl">Follow-ups</div>
+    <div class="num">{{a.followups}}</div>
+    <div class="note">of {{a.sent_total}} total touches</div>
+  </div>
+  <div class="tile accent">
+    <div class="tl">Reply rate</div>
+    <div class="num">{{a.reply_rate}}%</div>
+    <div class="note">{{a.replied}} replies received</div>
+  </div>
+  <div class="tile">
+    <div class="tl">Avg response</div>
+    <div class="num" style="font-size:26px">{{a.avg_response}}</div>
+    <div class="note">first reply after send</div>
+  </div>
+  <div class="tile">
+    <div class="tl">Bounce rate</div>
+    <div class="num" style="{{'color:var(--bad)' if a.bounce_rate > 3}}">{{a.bounce_rate}}%</div>
+    <div class="note">{{a.bounced}} bounced · keep under 3%</div>
+  </div>
+  <div class="tile">
+    <div class="tl">Unsubscribed</div>
+    <div class="num">{{a.unsub}}</div>
+    <div class="note">opt-outs honored instantly</div>
+  </div>
+</div>
+
+<!-- Sends over time -->
+<h2>Sends — last 14 days</h2>
+<div class="card">
+  {% if a.sent_total %}
+  <div style="display:flex;align-items:flex-end;gap:5px;height:130px">
+    {% for t in a.timeline %}
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:7px;height:100%">
+      <div style="flex:1;display:flex;align-items:flex-end;width:100%;position:relative">
+        <div title="{{t.count}} sent" style="width:100%;height:{{t.pct}}%;min-height:3px;border-radius:6px 6px 0 0;background:linear-gradient(180deg,var(--grad-1),var(--grad-3));transition:height .3s"></div>
+      </div>
+      <div style="font-size:10px;color:var(--text-3);white-space:nowrap">{{t.label}}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty" style="padding:24px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="m7 14 3-3 4 4 5-6"/></svg>
+    <p>No sends yet — enroll leads and run a cycle to see volume build here.</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Touch breakdown -->
+<h2>Touch breakdown</h2>
+<div class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+  <div class="tile"><div class="tl">Openers (step 1)</div><div class="num">{{a.step_counts.get(0,0)}}</div></div>
+  <div class="tile"><div class="tl">Follow-up 1 (step 2)</div><div class="num">{{a.step_counts.get(1,0)}}</div></div>
+  <div class="tile"><div class="tl">Follow-up 2 (step 3)</div><div class="num">{{a.step_counts.get(2,0)}}</div></div>
+  <div class="tile"><div class="tl">Pulled from Apollo</div><div class="num">{{a.apollo_pulled}}</div><div class="note">real contacts sourced</div></div>
+</div>
+
+<!-- Per-person engagement -->
+<h2>People <span class="hint">every contact and how they're engaging</span></h2>
+<div class="tbl"><table>
+  <thead><tr><th>Name</th><th>Brand</th><th>Position</th><th>Status</th><th>Mails</th><th>Follow-ups</th><th>Contacted</th><th>Response time</th></tr></thead>
+  <tbody>
+  {% for r in a.rows %}
+  <tr>
+    <td>{{r.name}}</td>
+    <td>{{r.company}}</td>
+    <td class="muted">{{r.title}}</td>
+    <td><span class="tag {{r.status}}">{{r.status}}</span></td>
+    <td class="mono">{{r.mails}}</td>
+    <td class="mono">{{r.followups}}</td>
+    <td class="muted mono">{{ r.contacted_at.strftime('%d %b') if r.contacted_at else '—' }}</td>
+    <td class="mono" style="{{'color:var(--ok);font-weight:600' if r.response}}">{{r.response or '—'}}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8"><div class="empty">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+    <p>No people yet — pull leads to populate this.</p></div></td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<div class="note-box" style="margin-top:22px">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+  <span><strong>About the data.</strong> Replies are detected by polling your own mailboxes over IMAP (live mode only) — that's why reply/response numbers are real and first-party. Apollo can't report on emails you send through Gmail, so there's no Apollo-side CTR; open tracking is intentionally off. Bounce and unsubscribe are captured automatically at send and poll time.</span>
+</div>
+{% endblock %}

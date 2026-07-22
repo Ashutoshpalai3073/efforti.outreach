@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set active_nav = 'act' %}
+{% block title %}Activity{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Activity</h1>
+  <p class="sub">Every send, reply, bounce, unsubscribe and pause — the full audit trail.</p>
+</div>
+<div class="chips">
+  <a href="/activity" class="{{'on' if not kind_filter}}">all</a>
+  {% for k in ['send','reply','bounce','unsub','pause','enroll','import','enrich','error'] %}
+  <a href="/activity?kind={{k}}" class="{{'on' if kind_filter==k}}">{{k}}</a>
+  {% endfor %}
+</div>
+<div class="tbl"><table><tbody>
+  {% for e in events %}
+  <tr>
+    <td class="muted mono" style="width:160px">{{e.created_at.strftime('%d %b · %H:%M:%S')}}</td>
+    <td style="width:96px"><span class="tag {{e.kind}}">{{e.kind}}</span></td>
+    <td>{{e.detail}}</td>
+  </tr>
+  {% else %}
+  <tr><td><div class="empty">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    <p>No events yet.</p></div></td></tr>
+  {% endfor %}
+</tbody></table></div>
+{% endblock %}

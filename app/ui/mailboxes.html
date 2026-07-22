@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% set active_nav = 'mail' %}
+{% block title %}Mailboxes{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Mailboxes</h1>
+  <p class="sub">Sending accounts on lookalike domains (getefforti.com, tryefforti.com…). Never your primary domain. Each mailbox needs a Gmail <strong>app password</strong>: Google Account → Security → 2-Step Verification → App passwords.</p>
+</div>
+
+<div class="grid">
+  <div class="card" style="max-width:540px">
+    <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m22 7-10 5L2 7"/></svg>Add mailbox</h2>
+    <form method="post" action="/mailboxes/add">
+      <label>Email</label>
+      <input type="email" name="email" placeholder="ashutosh@getefforti.com" required>
+      <label>Display name</label>
+      <input type="text" name="display_name" placeholder="Ashutosh from Efforti">
+      <label>Gmail app password</label>
+      <input type="password" name="app_password" required>
+      <label>Daily cap <span class="muted">— warm-up starts at 8/day, ramps +2/day up to this</span></label>
+      <input type="number" name="daily_cap" value="25" min="1" max="50">
+      <div style="margin-top:18px"><button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Add mailbox</button></div>
+    </form>
+  </div>
+</div>
+
+<h2>Configured mailboxes</h2>
+<div class="tbl"><table>
+  <thead><tr><th>Email</th><th>Status</th><th>Sent today</th><th>Effective cap</th><th>7-day bounce</th><th></th></tr></thead>
+  <tbody>
+  {% for m in mailboxes %}
+  <tr>
+    <td>{{m.email}}{% if m.display_name %}<div class="sub-line">{{m.display_name}}</div>{% endif %}</td>
+    <td>{% if m.active %}<span class="tag active">active</span>
+        {% else %}<span class="tag paused">paused</span>{% if m.paused_reason %}<div class="sub-line">{{m.paused_reason}}</div>{% endif %}{% endif %}</td>
+    <td class="mono">{{m.sent_today}}</td>
+    <td class="mono">{{m.effective_cap()}} <span class="muted">/ {{m.daily_cap}}</span></td>
+    <td class="mono" style="{{'color:var(--bad);font-weight:600' if m.bounce_rate() > 0.03}}">{{'%.1f'|format(m.bounce_rate()*100)}}%</td>
+    <td style="text-align:right"><form class="inline" method="post" action="/mailboxes/{{m.id}}/toggle">
+      <button class="btn ghost sm">{{'Pause' if m.active else 'Resume'}}</button>
+    </form></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6"><div class="empty">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m22 7-10 5L2 7"/></svg>
+    <p>No mailboxes yet — add your first sending account above.</p></div></td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

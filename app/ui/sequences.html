@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% set active_nav = 'seq' %}
+{% block title %}Sequences{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Sequences</h1>
+  <p class="sub">Personalization variables: <code>{{'{{first_name}}'}}</code> <code>{{'{{company}}'}}</code> <code>{{'{{title}}'}}</code> <code>{{'{{opener}}'}}</code> <code>{{'{{trigger}}'}}</code>. Follow-ups with an empty subject go out as “Re:” in the same thread.</p>
+</div>
+
+<div class="card" style="margin-bottom:24px">
+  <h2 style="margin-top:0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Follow-up cadence</h2>
+  <p class="muted" style="margin-bottom:4px">How many days to wait before each follow-up. This applies the same gap to every follow-up touch across your sequence — currently <strong style="color:var(--text)">every {{cadence}} days</strong>.</p>
+  <form method="post" action="/sequences/followup_gap" style="display:flex;align-items:flex-end;gap:12px;margin-top:14px">
+    <div style="width:200px">
+      <label style="margin-top:0">Send follow-ups every</label>
+      <select name="days">
+        {% for d in [1,2,3,4,5,6,7] %}
+        <option value="{{d}}" {{'selected' if cadence==d}}>{{d}} day{{'s' if d>1}}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn">Apply cadence</button>
+  </form>
+  <p class="muted" style="margin-top:12px;font-size:12px">Example at every 3 days: opener on Day 0, follow-up 1 on Day 3, follow-up 2 on Day 6. You can still fine-tune any individual step's wait below.</p>
+</div>
+
+{% for seq in sequences %}
+<h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg>{{seq.name}}</h2>
+{% for step in seq.steps %}
+<div class="card" style="margin-bottom:16px">
+  <form method="post" action="/sequences/step/{{step.id}}">
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:6px">
+      <span class="tag verified" style="font-size:12px;padding:4px 11px">Step {{step.step_index + 1}}</span>
+      <span class="muted" style="display:flex;align-items:center;gap:6px">wait
+        <input type="number" name="wait_days" value="{{step.wait_days}}" min="0"
+               style="width:62px;padding:5px 8px;text-align:center"> days
+        <span>{% if step.step_index == 0 %}— sends on enrollment{% else %}— after previous step{% endif %}</span>
+      </span>
+    </div>
+    <label>Subject {% if step.step_index > 0 %}<span class="muted">(leave empty to reply in-thread)</span>{% endif %}</label>
+    <input type="text" name="subject" value="{{step.subject}}">
+    <label>Body</label>
+    <textarea name="body" rows="9">{{step.body}}</textarea>
+    <div style="margin-top:16px"><button class="btn sm">Save step</button></div>
+  </form>
+</div>
+{% endfor %}
+{% else %}
+<div class="card"><div class="empty"><p>No sequences configured.</p></div></div>
+{% endfor %}
+{% endblock %}
