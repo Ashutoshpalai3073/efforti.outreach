@@ -1,4 +1,5 @@
 """Database models for the outreach engine."""
+import os
 import secrets
 from datetime import datetime, timezone
 
@@ -140,8 +141,14 @@ class Event(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
-engine = create_engine("sqlite:///outreach.db",
-                       connect_args={"check_same_thread": False})
+# DB location is configurable so it can live on a mounted volume in production.
+# Local default: ./outreach.db.  On a host with a persistent disk at /data:
+#   DATABASE_URL=sqlite:////data/outreach.db   (note the 4 slashes = absolute)
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///outreach.db")
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
+    if DATABASE_URL.startswith("sqlite") else {})
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 

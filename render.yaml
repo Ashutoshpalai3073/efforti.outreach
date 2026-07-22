@@ -1,0 +1,22 @@
+# One-click deploy on Render: New → Blueprint → point at this repo.
+# Runs the app as an always-on web service with a persistent disk for SQLite.
+services:
+  - type: web
+    name: efforti-outreach
+    runtime: docker
+    plan: starter                 # always-on; the free plan sleeps and loses the disk
+    envVars:
+      - key: DRY_RUN
+        value: "true"             # flip to "false" only after domains are warmed
+      - key: DATABASE_URL
+        value: sqlite:////data/outreach.db
+      - key: APP_BASE_URL
+        sync: false               # set to your Render URL after first deploy
+      - key: APOLLO_API_KEY
+        sync: false               # set in the Render dashboard (never in git)
+      - key: ANTHROPIC_API_KEY
+        sync: false
+    disk:
+      name: data
+      mountPath: /data            # persistent storage for outreach.db
+      sizeGB: 1

@@ -227,6 +227,11 @@ def pull_apollo(db, titles=None, size_ranges=None, keywords=None, locations=None
     except Exception as e:
         log(db, "error", f"apollo pull failed: {e}")
 
-    log(db, "import", f"Apollo pull (target {target}): {stats}")
+    dupes = stats["skipped_domain_dupe"] + stats["skipped_duplicate"]
+    log(db, "import",
+        f"Apollo pull: imported {stats['imported']} of {target} requested · "
+        f"{stats['fetched']} scanned · {dupes} duplicate · "
+        f"{stats['no_email']} without email"
+        + (" · pool exhausted" if stats["exhausted"] else ""))
     db.commit()
     return stats

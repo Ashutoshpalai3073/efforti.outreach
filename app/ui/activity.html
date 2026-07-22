@@ -3,8 +3,16 @@
 {% block title %}Activity{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Activity</h1>
-  <p class="sub">Every send, reply, bounce, unsubscribe and pause — the full audit trail.</p>
+  <div class="row">
+    <h1>Activity</h1>
+    {% if events %}
+    <form method="post" action="/activity/clear" style="margin-left:auto"
+          onsubmit="return confirm('Clear the activity log? This removes log entries only — your leads, mailboxes and sends are untouched.')">
+      <button class="btn ghost sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>Clear log</button>
+    </form>
+    {% endif %}
+  </div>
+  <p class="sub">Every send, reply, bounce, unsubscribe and pause — a live audit trail of ongoing activity.</p>
 </div>
 <div class="chips">
   <a href="/activity" class="{{'on' if not kind_filter}}">all</a>

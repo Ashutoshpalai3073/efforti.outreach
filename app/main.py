@@ -429,6 +429,19 @@ def activity_page(request: Request, kind: str = ""):
         db.close()
 
 
+@app.post("/activity/clear")
+def clear_activity():
+    """Wipe the activity log for a clean, live feed (logs only — leads,
+    mailboxes, sends and suppressions are untouched)."""
+    db = SessionLocal()
+    try:
+        db.query(Event).delete()
+        db.commit()
+        return RedirectResponse("/activity", status_code=303)
+    finally:
+        db.close()
+
+
 # ---------------- Unsubscribe (public) ----------------
 @app.get("/u/{token}", response_class=HTMLResponse)
 @app.post("/u/{token}", response_class=HTMLResponse)  # RFC 8058 one-click
