@@ -4,19 +4,15 @@ services:
   - type: web
     name: efforti-outreach
     runtime: docker
-    plan: starter                 # always-on; the free plan sleeps and loses the disk
+    plan: free
     envVars:
-      - key: DRY_RUN
-        value: "true"             # flip to "false" only after domains are warmed
       - key: DATABASE_URL
-        value: sqlite:////data/outreach.db
+        value: sqlite:////tmp/outreach.db
       - key: APP_BASE_URL
         sync: false               # set to your Render URL after first deploy
       - key: APOLLO_API_KEY
         sync: false               # set in the Render dashboard (never in git)
       - key: ANTHROPIC_API_KEY
         sync: false
-    disk:
-      name: data
-      mountPath: /data            # persistent storage for outreach.db
-      sizeGB: 1
+      - key: MANUAL_SEND_ONLY
+        value: "true"

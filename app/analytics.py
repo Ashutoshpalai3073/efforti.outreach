@@ -42,7 +42,7 @@ def compute(db, mailbox=None, leads=None):
     `mailbox`  — restrict sends/replies to this mailbox (None = all).
     `leads`    — the (already scoped) lead list to build the engagement table.
     """
-    msg_q = db.query(Message).filter(Message.status.in_(["sent", "dry_run"]))
+    msg_q = db.query(Message).filter(Message.status == "sent")
     if mailbox:
         msg_q = msg_q.filter(Message.mailbox_email == mailbox.email)
     msgs = msg_q.all()

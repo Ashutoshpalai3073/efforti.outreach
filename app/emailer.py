@@ -1,4 +1,4 @@
-"""SMTP sending with proper threading, unsubscribe headers, and dry-run mode."""
+"""SMTP sending with proper threading and unsubscribe headers."""
 import os
 import smtplib
 import uuid
@@ -10,7 +10,6 @@ from jinja2 import Template
 from .models import Enrollment, Lead, Mailbox, Message, log, utcnow
 
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:8000")
-DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 
 
 def render(template_str: str, lead: Lead) -> str:
@@ -70,15 +69,7 @@ def send(db, mailbox: Mailbox, lead: Lead, enrollment: Enrollment,
         enrollment_id=enrollment.id, lead_email=lead.email,
         mailbox_email=mailbox.email, step_index=step_index,
         subject=msg["Subject"], body=body, message_id=msg_id,
-        dry_run=DRY_RUN,
     )
-
-    if DRY_RUN:
-        record.status = "dry_run"
-        db.add(record)
-        log(db, "send", f"[DRY RUN] step {step_index} -> {lead.email} "
-                        f"via {mailbox.email} | {msg['Subject']}")
-        return True
 
     try:
         with smtplib.SMTP(mailbox.smtp_host, mailbox.smtp_port, timeout=30) as s:

@@ -20,10 +20,11 @@ services. Built for ~300–1,300 emails/week across a handful of Gmail mailboxes
 - **Compliance**: one-click unsubscribe endpoint (`/u/{token}`),
   List-Unsubscribe headers, permanent suppression list checked at import,
   enroll, and send time.
-- **DRY_RUN mode** (default ON): full pipeline runs, every "send" is logged
-  to the Activity page, nothing leaves the machine.
+- **You send, on click**: nothing goes out on its own. Add a mailbox, pick
+  leads, and hit send — the email is sent for real through that Gmail account.
+  To pause a mailbox, just turn it off on the Mailboxes page.
 
-## Quick start (local, dry run)
+## Quick start (local)
 
 ```bash
 pip install -r requirements.txt
@@ -31,10 +32,12 @@ pip install -r requirements.txt
 # open http://localhost:8000
 ```
 
-1. Mailboxes → add a mailbox (any fake password works in dry run).
-2. Leads → import a CSV (Apollo export format; needs an Email column).
-3. Leads → "Enroll all verified" into the seeded Efforti sequence.
-4. Dashboard → "Run send cycle now" → check Activity for [DRY RUN] sends.
+1. Mailboxes → add a real Gmail/Workspace mailbox (email + app password).
+2. Leads → pull from Apollo or import a CSV (needs an Email column).
+3. Leads → "Generate AI openers", then send the first email to a lead (or
+   select several and send to all).
+4. Dashboard → "Check replies" to pull in responses; a reply stops that
+   lead's follow-ups.
 
 ## Going live — do these IN ORDER, skipping steps burns your domains
 
@@ -51,7 +54,6 @@ pip install -r requirements.txt
 6. **Deploy** on a small VPS with a public URL (unsubscribe links must
    resolve). Set in `.env`:
    ```
-   DRY_RUN=false
    APP_BASE_URL=https://your-public-host
    ```
    Run behind nginx/caddy with HTTPS. Add basic auth or IP-restrict the
@@ -84,7 +86,7 @@ app/
   models.py     SQLAlchemy: Mailbox, Lead, Sequence, Enrollment, Message,
                 Suppression, Event
   importer.py   CSV import + syntax/MX verification + dedupe
-  emailer.py    SMTP send, threading headers, unsubscribe footer, dry-run
+  emailer.py    SMTP send, threading headers, unsubscribe footer
   scheduler.py  APScheduler jobs: due sends (5 min), IMAP poll (10 min),
                 counter decay (daily)
   seed.py       Default Efforti 3-touch sequence

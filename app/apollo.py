@@ -25,10 +25,33 @@ from .models import Lead, Suppression, log
 SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/api_search"
 MATCH_URL = "https://api.apollo.io/api/v1/people/match"
 
-# Default Efforti ICP: CEO / founder / chief-of-staff at 30-200 person companies.
-DEFAULT_TITLES = ["CEO", "Founder", "Co-Founder", "Chief Executive Officer",
-                  "Chief of Staff"]
+# Default Efforti ICP — the top 5 decision-makers per company, ranked by fit for
+# a "live visibility into team effort/blockers/risks" product:
+#   1 CEO/Founder (economic buyer)  2 COO (owns execution)
+#   3 Chief of Staff (visibility champion)  4 CFO (ROI angle)
+#   5 CPO (product/team delivery)
+# Title strings include the common variants Apollo matches on.
+DEFAULT_TITLES = [
+    "CEO", "Chief Executive Officer", "Founder", "Co-Founder", "Owner",
+    "COO", "Chief Operating Officer",
+    "Chief of Staff",
+    "CFO", "Chief Financial Officer",
+    "CPO", "Chief Product Officer",
+]
+# Seniority bias so we only ever pull genuinely senior people, never a random
+# "manager" who happens to have one of the title words.
+DEFAULT_SENIORITIES = ["owner", "founder", "c_suite"]
 DEFAULT_SIZE_RANGES = ["21,50", "51,100", "101,200"]
+
+# Named headcount presets for the UI dropdown -> Apollo range strings.
+SIZE_PRESETS = {
+    "seed":       ["1,10", "11,20"],
+    "startup":    ["21,50", "51,100", "101,200"],   # default ICP: 30–200
+    "growth":     ["201,500", "501,1000"],
+    "midmarket":  ["1001,2000", "2001,5000"],
+    "any":        ["1,10", "11,20", "21,50", "51,100", "101,200",
+                   "201,500", "501,1000"],
+}
 
 LOCKED_EMAIL_MARKERS = ("not_unlocked", "email_not_unlocked", "domain.com")
 
@@ -41,9 +64,18 @@ def _headers() -> dict:
     }
 
 
-def _search_page(titles, size_ranges, keywords, locations, page, per_page):
+def _org_domain(org: dict) -> str:
+    """Best-effort company domain from a (free) search-result org object, so we
+    can group by brand and enforce the per-brand cap BEFORE spending a credit."""
+    raw = org.get("primary_domain") or org.get("website_url") or ""
+    return normalize_domain(raw) if raw else ""
+
+
+def _search_page(titles, size_ranges, keywords, locations, page, per_page,
+                 seniorities=None):
     body = {
         "person_titles": titles,
+        "person_seniorities": seniorities or DEFAULT_SENIORITIES,
         "organization_num_employees_ranges": size_ranges,
         "page": page,
         "per_page": per_page,
@@ -101,50 +133,81 @@ def _person_to_fields(p: dict) -> dict:
 
 
 def preview_apollo(titles=None, size_ranges=None, keywords=None, locations=None,
-                   pages=1, per_page=25) -> dict:
-    """Search-only preview (NO credit spend). Shows who Apollo has for these
-    filters and how many have an email, so you can decide before revealing."""
-    result = {"total": 0, "with_email": 0, "people": [], "error": None}
+                   seniorities=None, brands=20, per_brand=5,
+                   max_pages=15) -> dict:
+    """Search-only preview (NO credit spend). Groups results BY BRAND and keeps
+    up to `per_brand` top execs per company, across up to `brands` companies —
+    so you see exactly the shape of what a pull would import, and how many
+    reveals (credits) it would cost, before spending anything."""
+    result = {"brands_found": 0, "contacts": 0, "with_email": 0,
+              "brands": [], "error": None,
+              "want_brands": brands, "want_per_brand": per_brand}
     if not os.environ.get("APOLLO_API_KEY"):
         result["error"] = "APOLLO_API_KEY not set"
         return result
     titles = titles or DEFAULT_TITLES
     size_ranges = size_ranges or DEFAULT_SIZE_RANGES
+    grouped = {}      # domain -> {"company", "people":[...]}
     try:
-        for page in range(1, pages + 1):
+        for page in range(1, max_pages + 1):
+            if len(grouped) >= brands and \
+                    all(len(g["people"]) >= per_brand for g in grouped.values()):
+                break
             data = _search_page(titles, size_ranges, keywords, locations,
-                                page, per_page)
+                                page, 100, seniorities)
             people = data.get("people", []) or []
             if not people:
                 break
             for p in people:
                 org = p.get("organization") or {}
+                dom = _org_domain(org) or (org.get("name") or "").strip().lower()
+                if not dom:
+                    continue
+                if dom not in grouped:
+                    if len(grouped) >= brands:
+                        continue                 # brand scope reached
+                    grouped[dom] = {"company": org.get("name") or "—",
+                                    "people": []}
+                g = grouped[dom]
+                if len(g["people"]) >= per_brand:
+                    continue                     # this brand is full
                 he = bool(p.get("has_email"))
-                result["total"] += 1
-                if he:
-                    result["with_email"] += 1
-                result["people"].append({
+                g["people"].append({
                     "first_name": p.get("first_name", "") or "—",
-                    "company": org.get("name", "") or "—",
                     "title": (p.get("title", "") or "—")[:64],
                     "has_email": he,
                 })
+                result["contacts"] += 1
+                if he:
+                    result["with_email"] += 1
     except Exception as e:
         result["error"] = str(e)
+    result["brands_found"] = len(grouped)
+    result["brands"] = sorted(grouped.values(),
+                              key=lambda g: g["company"].lower())
     return result
 
 
 def pull_apollo(db, titles=None, size_ranges=None, keywords=None, locations=None,
-                target=25, per_page=100, max_pages=25, do_reveal=True) -> dict:
-    """Pull until `target` NEW unique leads are imported (or the pool runs out).
+                seniorities=None, brands=20, per_brand=5,
+                max_pages=40, do_reveal=True) -> dict:
+    """Multi-thread pull: import up to `per_brand` top execs at up to `brands`
+    companies (default 5 execs × 20 brands = 100 targets).
 
-    Keeps fetching pages, skipping duplicates/no-email, and reveals emails only
-    up to the target — so you reliably get the count you asked for without
-    over-spending credits. Pre-skips already-known companies before enriching.
+    Instead of one random person per company, this deliberately gathers the
+    decision-making unit at each brand. It enforces a per-brand cap (counting
+    execs already in the DB from earlier pulls) and a brand-count cap, so the
+    scope is exactly `brands × per_brand`, never a random total. Reveals cost
+    ~1 Apollo credit each and only happen for contacts that pass the free-data
+    gates first.
     """
-    stats = {"target": target, "fetched": 0, "has_email": 0, "imported": 0,
-             "no_email": 0, "skipped_suppressed": 0, "skipped_duplicate": 0,
-             "skipped_domain_dupe": 0, "skipped_invalid": 0, "exhausted": False}
+    target_total = brands * per_brand
+    stats = {"brands": brands, "per_brand": per_brand,
+             "target_total": target_total, "fetched": 0, "has_email": 0,
+             "imported": 0, "brands_filled": 0, "no_email": 0,
+             "skipped_suppressed": 0, "skipped_duplicate": 0,
+             "skipped_brand_full": 0, "skipped_scope": 0,
+             "skipped_invalid": 0, "exhausted": False}
     if not os.environ.get("APOLLO_API_KEY"):
         log(db, "error", "apollo pull skipped: APOLLO_API_KEY not set")
         return stats
@@ -154,35 +217,51 @@ def pull_apollo(db, titles=None, size_ranges=None, keywords=None, locations=None
 
     suppressed = {s.email for s in db.query(Suppression).all()}
     existing_emails = {l.email for l in db.query(Lead.email).all()}
-    existing_domains = {l.company_domain for l in
-                        db.query(Lead.company_domain).all() if l.company_domain}
-    existing_companies = {(l.company or "").strip().lower()
-                          for l in db.query(Lead.company).all() if l.company}
+    # How many execs we already hold per domain — so topping a brand up never
+    # exceeds per_brand across separate pulls.
+    domain_counts = {}
+    for l in db.query(Lead.company_domain).all():
+        if l.company_domain:
+            domain_counts[l.company_domain] = domain_counts.get(
+                l.company_domain, 0) + 1
+    brand_domains = {}   # domains touched THIS run -> count added this run
+
+    def _room(dom: str) -> bool:
+        """True if this domain still has capacity AND fits the brand scope."""
+        held = domain_counts.get(dom, 0) + brand_domains.get(dom, 0)
+        if held >= per_brand:
+            return False
+        if dom not in brand_domains and len(brand_domains) >= brands:
+            return False
+        return True
 
     try:
         for page in range(1, max_pages + 1):
-            if stats["imported"] >= target:
+            if stats["imported"] >= target_total:
                 break
             data = _search_page(titles, size_ranges, keywords, locations,
-                                page, per_page)
+                                page, 100, seniorities)
             people = data.get("people", []) or []
             if not people:
                 stats["exhausted"] = True          # ran out of matching contacts
                 break
             for p in people:
-                if stats["imported"] >= target:
+                if stats["imported"] >= target_total:
                     break
                 stats["fetched"] += 1
-                # Skip anyone with no email on file — enriching them wastes a credit
                 if not p.get("has_email"):
                     stats["no_email"] += 1
                     continue
-                # Pre-skip a company we already have, from the FREE search data,
-                # so we never pay a credit to reveal a duplicate company.
                 org = p.get("organization") or {}
-                cname = (org.get("name") or "").strip().lower()
-                if cname and cname in existing_companies:
-                    stats["skipped_domain_dupe"] += 1
+                sdom = _org_domain(org)
+                # Pre-skip on the FREE search domain when we already know this
+                # brand is full or out of scope — saves a wasted credit.
+                if sdom and not _room(sdom):
+                    held = domain_counts.get(sdom, 0) + brand_domains.get(sdom, 0)
+                    if held >= per_brand:
+                        stats["skipped_brand_full"] += 1
+                    else:
+                        stats["skipped_scope"] += 1
                     continue
 
                 pid = p.get("id", "")
@@ -205,9 +284,15 @@ def pull_apollo(db, titles=None, size_ranges=None, keywords=None, locations=None
                 if verify_email(email, do_mx=False) != "ok":
                     stats["skipped_invalid"] += 1
                     continue
-                domain = normalize_domain(f["company_domain"]) or email.split("@", 1)[1]
-                if domain in existing_domains:
-                    stats["skipped_domain_dupe"] += 1
+                domain = normalize_domain(f["company_domain"]) or \
+                    email.split("@", 1)[1]
+                if not _room(domain):
+                    held = domain_counts.get(domain, 0) + \
+                        brand_domains.get(domain, 0)
+                    if held >= per_brand:
+                        stats["skipped_brand_full"] += 1
+                    else:
+                        stats["skipped_scope"] += 1
                     continue
 
                 db.add(Lead(
@@ -218,19 +303,20 @@ def pull_apollo(db, titles=None, size_ranges=None, keywords=None, locations=None
                     source="apollo", status="verified", verify_result="ok",
                 ))
                 existing_emails.add(email)
-                existing_domains.add(domain)
-                if cname:
-                    existing_companies.add(cname)
+                brand_domains[domain] = brand_domains.get(domain, 0) + 1
                 stats["imported"] += 1
     except requests.HTTPError as e:
         log(db, "error", f"apollo pull HTTP error: {e}")
     except Exception as e:
         log(db, "error", f"apollo pull failed: {e}")
 
-    dupes = stats["skipped_domain_dupe"] + stats["skipped_duplicate"]
+    stats["brands_filled"] = len(brand_domains)
     log(db, "import",
-        f"Apollo pull: imported {stats['imported']} of {target} requested · "
-        f"{stats['fetched']} scanned · {dupes} duplicate · "
+        f"Apollo pull: imported {stats['imported']} execs across "
+        f"{stats['brands_filled']} brands (target {per_brand}×{brands}"
+        f"={target_total}) · {stats['fetched']} scanned · "
+        f"{stats['skipped_brand_full']} brand-full · "
+        f"{stats['skipped_duplicate']} duplicate · "
         f"{stats['no_email']} without email"
         + (" · pool exhausted" if stats["exhausted"] else ""))
     db.commit()

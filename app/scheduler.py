@@ -21,7 +21,6 @@ BUSINESS_START = int(os.environ.get("BUSINESS_HOUR_START", "9"))
 BUSINESS_END = int(os.environ.get("BUSINESS_HOUR_END", "17"))
 BOUNCE_PAUSE_THRESHOLD = float(os.environ.get("BOUNCE_PAUSE_THRESHOLD", "0.03"))
 JITTER_MAX_MIN = int(os.environ.get("JITTER_MAX_MINUTES", "45"))
-DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 
 BOUNCE_SUBJECT_MARKERS = ("delivery status notification", "undeliverable",
                           "mail delivery failed", "returned mail",
@@ -41,67 +40,166 @@ def roll_daily_counters(db, mailbox: Mailbox, today: str):
         mailbox.sent_today_date = today
 
 
-def process_due_sends():
-    """Runs every few minutes. Sends whatever is due and allowed."""
-    db = SessionLocal()
+def due_counts(db=None):
+    """How many emails are ready to send right now, split by first-touch vs
+    follow-up. Powers the dashboard's manual 'Send' panel so you know what a
+    click will do before you click it."""
+    own = db is None
+    db = db or SessionLocal()
     try:
         now = utcnow()
-        today = now.strftime("%Y-%m-%d")
         due = (db.query(Enrollment)
                .filter(Enrollment.status == "active",
-                       Enrollment.next_send_at <= now)
-               .order_by(Enrollment.next_send_at)
-               .limit(50).all())
+                       Enrollment.next_send_at <= now).all())
+        first = sum(1 for e in due if e.current_step == 0)
+        followup = sum(1 for e in due if e.current_step > 0)
+        return {"first": first, "followup": followup,
+                "total": first + followup}
+    finally:
+        if own:
+            db.close()
 
-        suppressed = {s.email for s in db.query(Suppression).all()}
 
-        for enr in due:
-            lead, mailbox = enr.lead, enr.mailbox
-            if lead.email in suppressed or lead.status in (
-                    "replied", "bounced", "unsubscribed"):
-                enr.status = "halted_manual"
-                continue
+def _do_sends(db, now, manual: bool):
+    """Core send loop. Returns a stats dict describing what happened.
 
-            if not mailbox or not mailbox.active:
-                enr.next_send_at = now + timedelta(hours=1)
-                continue
+    manual=True (a button click): send everything due right now, ignoring the
+    business-hours window and processing a large batch in one go — YOU picked
+    the moment, so timing gates don't apply. Daily caps and the suppression
+    list are STILL enforced (they protect deliverability, not convenience).
+    manual=False (the background scheduler): the original throttled behaviour.
+    """
+    today = now.strftime("%Y-%m-%d")
+    batch = 1000 if manual else 50
+    due = (db.query(Enrollment)
+           .filter(Enrollment.status == "active",
+                   Enrollment.next_send_at <= now)
+           .order_by(Enrollment.next_send_at)
+           .limit(batch).all())
 
-            roll_daily_counters(db, mailbox, today)
-            if mailbox.sent_today >= mailbox.effective_cap():
-                enr.next_send_at = now + timedelta(hours=3)
-                continue
+    suppressed = {s.email for s in db.query(Suppression).all()}
+    stats = {"sent": 0, "capped": 0, "off_hours": 0, "suppressed": 0,
+             "no_mailbox": 0, "failed": 0, "finished": 0, "manual": manual}
 
-            if not in_business_hours(lead, now):
-                enr.next_send_at = now + timedelta(minutes=random.randint(30, 90))
-                continue
+    for enr in due:
+        lead, mailbox = enr.lead, enr.mailbox
+        if lead.email in suppressed or lead.status in (
+                "replied", "bounced", "unsubscribed"):
+            enr.status = "halted_manual"
+            stats["suppressed"] += 1
+            continue
 
-            steps = enr.sequence.steps
+        if not mailbox or not mailbox.active:
+            enr.next_send_at = now + timedelta(hours=1)
+            stats["no_mailbox"] += 1
+            continue
+
+        roll_daily_counters(db, mailbox, today)
+        if mailbox.sent_today >= mailbox.effective_cap():
+            enr.next_send_at = now + timedelta(hours=3)
+            stats["capped"] += 1
+            continue
+
+        # Business-hours gate applies only to the automatic scheduler. A manual
+        # click sends regardless of the local clock.
+        if not manual and not in_business_hours(lead, now):
+            enr.next_send_at = now + timedelta(minutes=random.randint(30, 90))
+            stats["off_hours"] += 1
+            continue
+
+        steps = enr.sequence.steps
+        if enr.current_step >= len(steps):
+            enr.status = "finished"
+            stats["finished"] += 1
+            continue
+        step = steps[enr.current_step]
+
+        ok = send(db, mailbox, lead, enr, step.subject, step.body,
+                  enr.current_step)
+        if ok:
+            mailbox.sent_today += 1
+            mailbox.sends_7d += 1
+            lead.status = "contacted"
+            enr.current_step += 1
+            stats["sent"] += 1
             if enr.current_step >= len(steps):
                 enr.status = "finished"
-                continue
-            step = steps[enr.current_step]
-
-            ok = send(db, mailbox, lead, enr, step.subject, step.body,
-                      enr.current_step)
-            if ok:
-                mailbox.sent_today += 1
-                mailbox.sends_7d += 1
-                lead.status = "contacted"
-                enr.current_step += 1
-                if enr.current_step >= len(steps):
-                    enr.status = "finished"
-                    lead.status = "finished" if lead.status == "contacted" \
-                        else lead.status
-                else:
-                    nxt = steps[enr.current_step]
-                    enr.next_send_at = (now + timedelta(days=nxt.wait_days)
-                                        + timedelta(minutes=random.randint(
-                                            0, JITTER_MAX_MIN)))
+                lead.status = "finished" if lead.status == "contacted" \
+                    else lead.status
             else:
-                enr.next_send_at = now + timedelta(hours=6)  # retry later
-        db.commit()
+                nxt = steps[enr.current_step]
+                enr.next_send_at = (now + timedelta(days=nxt.wait_days)
+                                    + timedelta(minutes=random.randint(
+                                        0, JITTER_MAX_MIN)))
+        else:
+            enr.next_send_at = now + timedelta(hours=6)  # retry later
+            stats["failed"] += 1
+    db.commit()
+    return stats
+
+
+def process_due_sends():
+    """Scheduler entry point — throttled, business-hours-aware auto-send."""
+    db = SessionLocal()
+    try:
+        return _do_sends(db, utcnow(), manual=False)
     finally:
         db.close()
+
+
+def send_due_now():
+    """Manual entry point — a button click drains the whole due queue now
+    (still capped per mailbox, still skips suppressed). Returns stats."""
+    db = SessionLocal()
+    try:
+        return _do_sends(db, utcnow(), manual=True)
+    finally:
+        db.close()
+
+
+def send_enrollment_step(db, enr, step_index, respect_cap=True):
+    """Send ONE specific step for one enrollment, right now. This powers the
+    per-lead 'Send first email' / 'Send follow-up N' buttons and the
+    'send to selected' action. Returns a short status string:
+
+      sent · stopped (replied/bounced/opted out) · no_mailbox · out_of_order
+      (that step isn't this lead's next one) · capped (daily limit) · done
+      (whole sequence finished) · failed.
+
+    Order is enforced — you can only send a lead's NEXT unsent step, so a
+    follow-up can never jump ahead of the first email. Business hours are
+    ignored (you picked the moment); daily caps and opt-outs are respected.
+    The caller commits.
+    """
+    now = utcnow()
+    today = now.strftime("%Y-%m-%d")
+    lead, mailbox = enr.lead, enr.mailbox
+    if lead.status in ("replied", "bounced", "unsubscribed"):
+        return "stopped"
+    if not mailbox or not mailbox.active:
+        return "no_mailbox"
+    steps = enr.sequence.steps
+    if enr.current_step >= len(steps):
+        enr.status = "finished"
+        return "done"
+    if step_index != enr.current_step:
+        return "out_of_order"
+    roll_daily_counters(db, mailbox, today)
+    if respect_cap and mailbox.sent_today >= mailbox.effective_cap():
+        return "capped"
+    step = steps[step_index]
+    if not send(db, mailbox, lead, enr, step.subject, step.body, step_index):
+        return "failed"
+    mailbox.sent_today += 1
+    mailbox.sends_7d += 1
+    lead.status = "contacted"
+    enr.current_step += 1
+    if enr.current_step >= len(steps):
+        enr.status = "finished"
+        lead.status = "finished"
+    else:
+        enr.next_send_at = now + timedelta(days=steps[enr.current_step].wait_days)
+    return "sent"
 
 
 def _classify_inbound(msg) -> str:
@@ -136,9 +234,7 @@ def _extract_target_email(msg, kind: str) -> str:
 
 
 def poll_inboxes():
-    """Runs every N minutes. Checks each mailbox for replies and bounces."""
-    if DRY_RUN:
-        return  # nothing real was sent; nothing to poll
+    """Checks each mailbox for replies and bounces."""
     db = SessionLocal()
     try:
         known_leads = {l.email: l for l in db.query(Lead).all()}
@@ -191,6 +287,12 @@ def _halt(db, lead: Lead, status: str):
             Enrollment.lead_id == lead.id,
             Enrollment.status == "active").all():
         enr.status = status
+
+
+def poll_now():
+    """Manual 'check replies & bounces' trigger."""
+    poll_inboxes()
+    return {"polled": True}
 
 
 def weekly_counter_decay():

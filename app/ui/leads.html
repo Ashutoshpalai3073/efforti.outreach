@@ -7,7 +7,7 @@
     <h1>Leads</h1>
     {% if active_mb %}<span class="scope-pill">Sending as {{active_mb.email}}</span>{% endif %}
   </div>
-  <p class="sub">Pull C-suite contacts straight from Apollo, let AI write a personalized opener for each, then enroll.{% if active_mb %} Showing this mailbox's leads plus the shared verified pool available to enroll into it.{% else %} Bad syntax, dead domains, suppressed emails and duplicate companies are filtered automatically.{% endif %}</p>
+  <p class="sub">Pull the top decision-makers per brand straight from Apollo, let AI write a personalized opener for each, then enroll.{% if active_mb %} Showing this mailbox's leads plus the shared verified pool available to enroll into it.{% else %} Bad syntax, dead domains and suppressed emails are filtered automatically; up to 5 execs are kept per brand.{% endif %}</p>
 </div>
 
 {% if import_result %}
@@ -35,32 +35,84 @@
 {% if pull_result %}
 <div class="note-box" style="background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);margin-bottom:22px">
   <svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)"><path d="M20 6 9 17l-5-5"/></svg>
-  <span><strong style="color:var(--ok)">Imported {{pull_result.imported}} of {{pull_result.requested}} requested.</strong>
-  Scanned {{pull_result.fetched}} contacts · {{pull_result.dupe}} duplicate {{'company' if pull_result.dupe==1 else 'companies'}} skipped · {{pull_result.no_email}} without an email.
-  {% if pull_result.exhausted and pull_result.imported < pull_result.requested %}<br><strong>Pool exhausted for these filters</strong> — broaden the keywords/locations or headcount range to find more.{% endif %}</span>
+  <span><strong style="color:var(--ok)">Imported {{pull_result.imported}} execs across {{pull_result.brands_filled}} brand{{'' if pull_result.brands_filled==1 else 's'}}.</strong>
+  Target was {{pull_result.per_brand}} per brand × {{pull_result.brands}} brands ({{pull_result.target_total}} max). Scanned {{pull_result.fetched}} contacts · {{pull_result.brand_full}} skipped (brand already full) · {{pull_result.dupe}} duplicate · {{pull_result.no_email}} without an email.
+  {% if pull_result.exhausted and pull_result.imported < pull_result.target_total %}<br><strong>Pool exhausted for these filters</strong> — broaden the keywords/locations or headcount range to reach more brands.{% endif %}</span>
 </div>
+{% endif %}
+
+{% if send_feedback %}
+  {% set f = send_feedback %}
+  {% if f.kind == 'one' %}
+    {% set ok = f.status == 'sent' %}
+    <div class="note-box" style="margin-bottom:22px;{% if ok %}background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent){% else %}background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 30%,transparent){% endif %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="{{'var(--ok)' if ok else 'var(--warn)'}}"><path d="M20 6 9 17l-5-5"/></svg>
+      <span>
+      {% if f.status == 'sent' %}<strong style="color:var(--ok)">Email sent.</strong>
+      {% elif f.status == 'capped' %}Not sent — that mailbox has hit its <strong>daily limit</strong>. Send the rest tomorrow, or raise the cap on the Mailboxes page.
+      {% elif f.status == 'no_mailbox' %}Add and turn on a <a href="/mailboxes">mailbox</a> first — there's nothing to send from.
+      {% elif f.status == 'no_sequence' %}There's no active email sequence to send.
+      {% elif f.status == 'stopped' %}This person already replied, bounced, or opted out — sending is stopped for them.
+      {% elif f.status == 'out_of_order' %}Send the earlier email first — you can't skip ahead.
+      {% elif f.status == 'done' %}This lead has already received every email in the sequence.
+      {% else %}Send failed — check the <a href="/activity">Activity</a> log for the reason.
+      {% endif %}
+      </span>
+    </div>
+  {% else %}
+    <div class="note-box" style="margin-bottom:22px;background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)"><path d="M20 6 9 17l-5-5"/></svg>
+      <span><strong style="color:var(--ok)">Sent {{f.sent}} × {{f.label}}.</strong>
+      {% set held = f.capped + f.skipped + f.no_mailbox %}
+      {% if held %}<br>{% if f.capped %}{{f.capped}} held by daily limit · {% endif %}{% if f.skipped %}{{f.skipped}} skipped (not at this step) · {% endif %}{% if f.no_mailbox %}{{f.no_mailbox}} had no mailbox{% endif %}.{% endif %}</span>
+    </div>
+  {% endif %}
 {% endif %}
 
 <div class="grid">
   <div class="card">
     <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Pull from Apollo</h2>
-    <form method="post">
-      <label>Keywords <span class="muted">(comma-separated, optional)</span></label>
+    <form method="post" id="apolloForm">
+      <div style="display:flex;gap:12px">
+        <div style="flex:1">
+          <label>Brands (companies)</label>
+          <input type="number" name="brands" id="apBrands" value="20" min="1" max="100">
+        </div>
+        <div style="flex:1">
+          <label>Execs per brand</label>
+          <input type="number" name="per_brand" id="apPer" value="5" min="1" max="10">
+        </div>
+      </div>
+      <label style="margin-top:12px">Company size</label>
+      <select name="size_range">
+        <option value="seed">Seed (1–20)</option>
+        <option value="startup" selected>Startup (21–200) · default ICP</option>
+        <option value="growth">Growth (201–1,000)</option>
+        <option value="midmarket">Mid-market (1,000–5,000)</option>
+        <option value="any">Any size</option>
+      </select>
+      <label style="margin-top:12px">Industry / keywords <span class="muted">(comma-separated, optional)</span></label>
       <input type="text" name="keywords" placeholder="saas, fintech, remote-first">
       <label>Locations <span class="muted">(optional)</span></label>
       <input type="text" name="locations" placeholder="India, United States">
-      <label>How many leads to import</label>
-      <input type="number" name="count" value="25" min="1" max="200">
-      <p class="muted" style="margin-top:5px;font-size:12px">It keeps searching until it gets you this many new, unique, emailable leads — then stops (so you don't over-spend credits).</p>
-      <div class="note-box" style="background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 25%,transparent)">
+      <div class="note-box" style="background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 25%,transparent);margin-top:14px">
         <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-        <span>Default ICP: CEO / Founder / Chief of Staff, 30–200 employees. <strong>Preview is free</strong> — revealing emails on import uses ~1 Apollo credit each.</span>
+        <span>Targets the <strong>top 5 decision-makers</strong> per brand: CEO/Founder · COO · Chief of Staff · CFO · CPO. Scope this pull: <strong id="apScope">up to 100 execs</strong>. <strong>Preview is free</strong> — reveal on import costs ~1 credit each.</span>
       </div>
       <div style="margin-top:16px;display:flex;gap:10px">
         <button class="btn ghost" formaction="/leads/apollo_preview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>Preview</button>
         <button class="btn" formaction="/leads/apollo_pull"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Pull &amp; import</button>
       </div>
     </form>
+    <script>
+      (function(){
+        var b=document.getElementById('apBrands'),p=document.getElementById('apPer'),
+            s=document.getElementById('apScope');
+        function upd(){var n=(+b.value||0)*(+p.value||0);
+          s.textContent='up to '+n+' exec'+(n===1?'':'s');}
+        b.addEventListener('input',upd);p.addEventListener('input',upd);upd();
+      })();
+    </script>
   </div>
 
   <div class="card">
@@ -103,31 +155,38 @@
 </div>
 
 {% if preview %}
-<h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>Apollo preview <span class="hint">no credits spent</span></h2>
+<h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>Apollo preview <span class="hint">grouped by brand · no credits spent</span></h2>
 {% if preview.error %}
 <div class="note-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><span>Apollo error: {{preview.error}}</span></div>
 {% else %}
 <div class="card" style="margin-bottom:16px">
   <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-    <div><span style="font-size:28px;font-weight:750">{{preview.total}}</span> <span class="muted">contacts found</span></div>
+    <div><span style="font-size:28px;font-weight:750">{{preview.brands_found}}</span> <span class="muted">brands</span></div>
+    <div><span style="font-size:28px;font-weight:750">{{preview.contacts}}</span> <span class="muted">top execs</span></div>
     <div><span style="font-size:28px;font-weight:750;color:var(--accent-ink)">{{preview.with_email}}</span> <span class="muted">have an email</span></div>
     <form method="post" action="/leads/apollo_pull" style="margin-left:auto">
       <input type="hidden" name="keywords" value="{{preview_filters.keywords}}">
       <input type="hidden" name="locations" value="{{preview_filters.locations}}">
-      <input type="hidden" name="count" value="{{preview.with_email}}">
-      <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Import these — reveal {{preview.with_email}} emails (~{{preview.with_email}} credits)</button>
+      <input type="hidden" name="size_range" value="{{preview_filters.size_range}}">
+      <input type="hidden" name="brands" value="{{preview_filters.brands}}">
+      <input type="hidden" name="per_brand" value="{{preview_filters.per_brand}}">
+      <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Import these — reveal up to {{preview.with_email}} emails (~{{preview.with_email}} credits)</button>
     </form>
   </div>
 </div>
 <div class="tbl" style="margin-bottom:32px"><table>
-  <thead><tr><th>First name</th><th>Brand</th><th>Position</th><th>Email available</th></tr></thead>
+  <thead><tr><th>Brand</th><th>Top execs found (name · role)</th><th>With email</th></tr></thead>
   <tbody>
-  {% for p in preview.people %}
+  {% for brand in preview.brands %}
   <tr>
-    <td>{{p.first_name}}</td>
-    <td>{{p.company}}</td>
-    <td class="muted">{{p.title}}</td>
-    <td>{% if p.has_email %}<span class="tag active">yes</span>{% else %}<span class="tag">no email</span>{% endif %}</td>
+    <td style="font-weight:600;vertical-align:top">{{brand.company}}</td>
+    <td>
+      {% for p in brand.people %}
+        <div style="padding:2px 0">{{p.first_name}} <span class="muted">· {{p.title}}</span>
+          {% if not p.has_email %}<span class="tag" style="margin-left:4px">no email</span>{% endif %}</div>
+      {% endfor %}
+    </td>
+    <td class="mono" style="vertical-align:top">{{ brand.people | selectattr('has_email') | list | length }}/{{ brand.people | length }}</td>
   </tr>
   {% endfor %}
   </tbody>
@@ -135,34 +194,159 @@
 {% endif %}
 {% endif %}
 
-<h2>All leads
-  {% if status_filter %}<span class="hint">· filtered: {{status_filter}} · <a href="/leads">clear</a></span>{% endif %}
+<style>
+.sendfrom{display:flex;align-items:center;gap:10px;margin:4px 0 12px;padding:11px 14px;
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;flex-wrap:wrap;font-size:13px}
+.sendfrom label{display:flex;align-items:center;gap:7px;font-weight:600;margin:0}
+.sendfrom label svg{width:15px;height:15px;stroke:var(--accent)}
+.sendfrom select{min-width:230px;font-weight:600;padding:8px 30px 8px 11px}
+.seltools{display:flex;align-items:center;gap:10px;margin:6px 0 12px;font-size:13px;flex-wrap:wrap}
+.seltools input[type=number]{width:64px;padding:6px 8px}
+.seltools .selall{display:flex;align-items:center;gap:7px;font-weight:500}
+.bulkbar{display:flex;align-items:center;gap:14px;padding:11px 15px;margin-bottom:14px;
+  background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);
+  border-radius:12px;position:sticky;top:8px;z-index:5;flex-wrap:wrap}
+.bulkbar b{font-weight:700}
+.bulkbar .bb-btns{display:flex;gap:8px;flex-wrap:wrap}
+.steps{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.stp{font-size:11px;font-weight:600;padding:3px 8px;border-radius:99px;white-space:nowrap;letter-spacing:.01em}
+.stp.done{background:var(--ok-soft);color:var(--ok)}
+.stp.lock{background:var(--surface-3);color:var(--text-3)}
+td .btn.sm{white-space:nowrap}
+.lcb{width:16px;height:16px;cursor:pointer;accent-color:var(--accent)}
+.contact-em{font-weight:600}
+.contact-sub{font-size:12px;color:var(--text-3)}
+.dontmail{color:var(--text-3);font-size:12px;cursor:pointer;background:none;border:0;padding:4px}
+.dontmail:hover{color:var(--bad)}
+</style>
+
+<h2 style="margin-bottom:2px">Your leads — pick who to email
+  {% if status_filter %}<span class="hint">· showing: {{status_filter}} · <a href="/leads">show all</a></span>{% endif %}
 </h2>
+<p class="muted" style="font-size:12.5px;margin-bottom:10px">Send the first email or the next follow-up to one person, or tick several and send the same email to all of them at once. Already-sent emails show a ✓ and can't be sent twice.</p>
 <div class="chips">
   <a href="/leads" class="{{'on' if not status_filter}}">all</a>
-  {% for s in ['verified','enrolled','contacted','replied','bounced','unsubscribed','finished'] %}
+  {% for s, lbl in [('verified','need first email'),('enrolled','need first email'),('contacted','in follow-up'),('replied','replied'),('bounced','bounced'),('unsubscribed','opted out'),('finished','done')] %}
   <a href="/leads?status={{s}}" class="{{'on' if status_filter==s}}">{{s}}</a>
   {% endfor %}
 </div>
+
+{% set actives = mailboxes_all | selectattr('active') | list %}
+<div class="sendfrom">
+  <label for="senderMb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m22 7-10 5L2 7"/></svg>Send from</label>
+  {% if actives %}
+  <select id="senderMb">
+    {% if actives|length > 1 %}<option value="">Spread across all ({{actives|length}} mailboxes)</option>{% endif %}
+    {% for m in actives %}<option value="{{m.id}}"{{ ' selected' if active_mb and active_mb.id == m.id }}>{{m.email}}</option>{% endfor %}
+  </select>
+  <span class="muted" style="font-size:11.5px">First emails go from here. Follow-ups always send from the mailbox that started the thread.</span>
+  {% else %}
+  <span class="muted">No active mailbox — <a href="/mailboxes">add one</a> to send.</span>
+  {% endif %}
+</div>
+
+<div class="seltools">
+  <label class="selall"><input type="checkbox" id="selAll" class="lcb"> Select all shown</label>
+  <span class="muted">or top</span>
+  <input type="number" id="topN" value="50" min="1" max="500">
+  <button type="button" class="btn ghost sm" id="topBtn">Select</button>
+  <a href="#" id="clearSel" class="muted" style="display:none">clear selection</a>
+</div>
+<div id="bulkBar" class="bulkbar" style="display:none">
+  <span><b id="bulkCount">0</b> selected</span>
+  <span class="muted" style="font-size:12px">Same email goes to everyone in a group — first emails and follow-ups stay separate:</span>
+  <span class="bb-btns" id="bulkBtns"></span>
+</div>
+<form id="bulkForm" method="post" action="/leads/send_selected" style="display:none">
+  <input type="hidden" name="step" id="bulkStep"><input type="hidden" name="ids" id="bulkIds">
+  <input type="hidden" name="mailbox_id" id="bulkMb">
+</form>
+
 <div class="tbl"><table>
-  <thead><tr><th>Email</th><th>Name</th><th>Title</th><th>Company</th><th>Opener</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th style="width:34px"></th><th>Contact</th><th>Company</th><th>Opener</th><th>Outreach</th><th style="width:36px"></th></tr></thead>
   <tbody>
   {% for l in leads %}
+  {% set pr = progress[l.id] %}
   <tr>
-    <td>{{l.email}}</td>
-    <td>{{l.first_name}} {{l.last_name}}</td>
-    <td class="muted">{{l.title}}</td>
+    <td>{% if pr.state == 'ready' and pr.next is not none %}
+      <input type="checkbox" class="lcb rowcb" value="{{l.id}}" data-step="{{pr.next}}">{% endif %}</td>
+    <td><div class="contact-em">{{l.email}}</div>
+      <div class="contact-sub">{{l.first_name}} {{l.last_name}}{% if l.title %} · {{l.title}}{% endif %}</div></td>
     <td>{{l.company}} <span class="muted">{{l.company_size}}</span></td>
-    <td class="muted" style="max-width:360px">{{l.opener or l.trigger}}</td>
-    <td><span class="tag {{l.status}}">{{l.status}}</span></td>
+    <td class="muted" style="max-width:300px;font-size:12.5px">{{ (l.opener or l.trigger)|truncate(120) }}</td>
+    <td>
+      {% if pr.state == 'ready' %}
+        <div class="steps">
+        {% for i in range(total_steps) %}
+          {% if i in pr.sent %}<span class="stp done" title="already sent">✓ {{step_labels[i]}}</span>
+          {% elif i == pr.next %}<form class="inline" method="post" action="/leads/{{l.id}}/send">
+              <input type="hidden" name="step" value="{{i}}">
+              <input type="hidden" name="mailbox_id" class="mbfield" value="{{active_mb.id if active_mb else ''}}">
+              <button class="btn sm">{{pr.action}}</button></form>
+          {% else %}<span class="stp lock" title="earlier email must go first">{{step_labels[i]}}</span>{% endif %}
+        {% endfor %}
+        </div>
+      {% elif pr.state == 'done' %}<span class="tag finished">all sent</span>
+      {% elif pr.state == 'replied' %}<span class="tag replied">replied</span>
+      {% elif pr.state == 'bounced' %}<span class="tag bounced">bounced</span>
+      {% elif pr.state == 'unsubscribed' %}<span class="tag unsubscribed">opted out</span>
+      {% endif %}
+    </td>
     <td style="text-align:right"><form class="inline" method="post" action="/leads/{{l.id}}/suppress">
-        <button class="btn danger sm" title="Never contact">Suppress</button></form></td>
+        <button class="dontmail" title="Never email this person">✕</button></form></td>
   </tr>
   {% else %}
-  <tr><td colspan="7"><div class="empty">
+  <tr><td colspan="6"><div class="empty">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
     <p>No leads yet — pull from Apollo or import a CSV above.</p></div></td></tr>
   {% endfor %}
   </tbody>
 </table></div>
+
+<script>
+(function(){
+  function rowboxes(){return Array.prototype.slice.call(document.querySelectorAll('.rowcb'));}
+  var bar=document.getElementById('bulkBar'),cnt=document.getElementById('bulkCount'),
+      btns=document.getElementById('bulkBtns'),clear=document.getElementById('clearSel'),
+      selAll=document.getElementById('selAll'),senderMb=document.getElementById('senderMb');
+  function mbVal(){return senderMb?senderMb.value:'';}
+  function syncMb(){var v=mbVal();
+    Array.prototype.forEach.call(document.querySelectorAll('.mbfield'),function(f){f.value=v;});}
+  if(senderMb)senderMb.addEventListener('change',syncMb);
+  syncMb();
+  function stepText(s){return s==0?'first email':'follow-up '+s;}
+  function refresh(){
+    var checked=rowboxes().filter(function(b){return b.checked;});
+    cnt.textContent=checked.length;
+    var g={};
+    checked.forEach(function(b){var s=b.getAttribute('data-step');g[s]=(g[s]||0)+1;});
+    btns.innerHTML='';
+    Object.keys(g).sort(function(a,b){return a-b;}).forEach(function(s){
+      var b=document.createElement('button');
+      b.type='button';b.className='btn sm';
+      b.textContent='Send '+stepText(+s)+' to '+g[s];
+      b.onclick=function(){
+        var ids=checked.filter(function(x){return x.getAttribute('data-step')===s;})
+                       .map(function(x){return x.value;}).join(',');
+        document.getElementById('bulkStep').value=s;
+        document.getElementById('bulkIds').value=ids;
+        document.getElementById('bulkMb').value=mbVal();
+        document.getElementById('bulkForm').submit();
+      };
+      btns.appendChild(b);
+    });
+    bar.style.display=checked.length?'flex':'none';
+    clear.style.display=checked.length?'inline':'none';
+    if(selAll){var all=rowboxes();selAll.checked=all.length>0&&checked.length===all.length;}
+  }
+  document.addEventListener('change',function(e){if(e.target.classList.contains('rowcb'))refresh();});
+  if(selAll)selAll.addEventListener('change',function(e){
+    rowboxes().forEach(function(b){b.checked=e.target.checked;});refresh();});
+  document.getElementById('topBtn').addEventListener('click',function(){
+    var n=+document.getElementById('topN').value||0;
+    rowboxes().forEach(function(b,i){b.checked=i<n;});refresh();});
+  clear.addEventListener('click',function(e){e.preventDefault();
+    rowboxes().forEach(function(b){b.checked=false;});refresh();});
+})();
+</script>
 {% endblock %}

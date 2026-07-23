@@ -108,7 +108,7 @@ class Enrollment(Base):
 
 
 class Message(Base):
-    """Every send attempt, real or dry-run."""
+    """Every send attempt."""
     __tablename__ = "messages"
     id = Column(Integer, primary_key=True)
     enrollment_id = Column(Integer, ForeignKey("enrollments.id"), index=True)
@@ -119,8 +119,7 @@ class Message(Base):
     body = Column(Text)
     message_id = Column(String, index=True)        # RFC Message-ID we generated
     sent_at = Column(DateTime, default=utcnow)
-    dry_run = Column(Boolean, default=False)
-    status = Column(String, default="sent")        # sent / failed / dry_run
+    status = Column(String, default="sent")        # sent / failed
 
 
 class Suppression(Base):
