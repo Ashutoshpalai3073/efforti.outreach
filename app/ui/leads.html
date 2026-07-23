@@ -32,6 +32,40 @@
   {% endif %}
 {% endif %}
 
+{% if research_result %}
+  {% set rr = research_result %}
+  {% if rr.provider == 'fallback-only' %}
+  <div class="note-box" style="background:var(--bad-soft);border-color:color-mix(in srgb,var(--bad) 35%,transparent);margin-bottom:22px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="var(--bad)"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+    <span><strong style="color:var(--bad)">Research didn't run — no API key.</strong> Set <code>ANTHROPIC_API_KEY</code> so Claude can research your companies.</span>
+  </div>
+  {% else %}
+  <div class="note-box" style="background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);margin-bottom:22px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)"><path d="M20 6 9 17l-5-5"/></svg>
+    <span><strong style="color:var(--ok)">Researched {{rr.companies}} compan{{'y' if rr.companies==1 else 'ies'}} → {{rr.leads}} leads.</strong>
+      {{rr.web}} via live web search{% if rr.noweb %} · {{rr.noweb}} from known facts (web search unavailable){% endif %}{% if rr.failed %} · {{rr.failed}} failed{% endif %}.
+      Now click <strong>Generate openers</strong> — the first line will use these specifics.</span>
+  </div>
+  {% endif %}
+{% endif %}
+
+{% if enrich_result %}
+  {% set er = enrich_result %}
+  {% if er.provider == 'fallback-only' %}
+  <div class="note-box" style="background:var(--bad-soft);border-color:color-mix(in srgb,var(--bad) 35%,transparent);margin-bottom:22px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="var(--bad)"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+    <span><strong style="color:var(--bad)">AI openers are OFF — {{er.fallback}} leads got the same generic line.</strong>
+      No API key reached the app, so nothing was personalized by AI. Set <code>ANTHROPIC_API_KEY</code> (in your <code>.env</code> locally, or the host's dashboard) and generate again.</span>
+  </div>
+  {% else %}
+  <div class="note-box" style="background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);margin-bottom:22px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)"><path d="M20 6 9 17l-5-5"/></svg>
+    <span><strong style="color:var(--ok)">{{er.ai}} openers written by AI ({{er.provider}}).</strong>
+      {% if er.fallback %}{{er.fallback}} fell back to the generic line (usually thin company data or a transient API error).{% else %}Every verified lead without an opener now has a personalized first line.{% endif %}</span>
+  </div>
+  {% endif %}
+{% endif %}
+
 {% if pull_result %}
 <div class="note-box" style="background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);margin-bottom:22px">
   <svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)"><path d="M20 6 9 17l-5-5"/></svg>
@@ -129,10 +163,24 @@
   </div>
 
   <div class="card">
+    <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Research companies</h2>
+    <form method="post" action="/leads/research">
+      <p class="muted" style="margin-bottom:4px;line-height:1.55">Claude searches the web for <strong style="color:var(--text-2)">current specifics</strong> on each company — what they do, recent funding/launches/hiring, and the scaling pain a CEO feels — and caches a tight briefing per company. That briefing then powers a sharper, more relevant opener.</p>
+      <label style="margin-top:10px">Max companies this run <span class="muted">— cost cap; researches one call per company</span></label>
+      <input type="number" name="limit" value="60" min="1" max="500">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:500;margin-top:12px">
+        <input type="checkbox" name="refresh" value="on" style="width:auto"> Re-research companies that already have a briefing
+      </label>
+      <p class="muted" style="margin-top:8px;font-size:12px">{{researched_pool}} lead{{'' if researched_pool==1 else 's'}} already have research. Spends API + web-search credits — run it once per batch, before generating openers.</p>
+      <div style="margin-top:16px"><button class="btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Research companies</button></div>
+    </form>
+  </div>
+
+  <div class="card">
     <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg>Generate AI openers</h2>
     <form method="post" action="/leads/enrich">
       <input type="hidden" name="limit" value="500">
-      <p class="muted" style="margin-bottom:4px;line-height:1.55">Writes one personalized first line for every <strong style="color:var(--text-2)">verified</strong> lead that doesn't have one yet, using your configured LLM (Groq or Claude). Falls back to a safe generic line if no key is set.</p>
+      <p class="muted" style="margin-bottom:4px;line-height:1.55">Writes one personalized first line for every <strong style="color:var(--text-2)">verified</strong> lead that doesn't have one yet. Uses the <strong style="color:var(--text-2)">company research</strong> above when present (sharper, current) — otherwise the Apollo facts. Falls back to a safe generic line only if no key is set.</p>
       <div style="margin-top:18px"><button class="btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m12 3 1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3Z"/></svg>Generate openers</button></div>
     </form>
   </div>
@@ -200,6 +248,12 @@
 .sendfrom label{display:flex;align-items:center;gap:7px;font-weight:600;margin:0}
 .sendfrom label svg{width:15px;height:15px;stroke:var(--accent)}
 .sendfrom select{min-width:230px;font-weight:600;padding:8px 30px 8px 11px}
+.ccbcc{margin:0 0 12px;padding:11px 14px;background:var(--surface);border:1px solid var(--border);
+  border-radius:12px}
+.ccbcc-fields{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:7px}
+.ccbcc-f{flex:1;min-width:220px}
+.ccbcc-f label{display:block;font-weight:600;font-size:12.5px;margin:0 0 4px}
+.ccbcc-f input{width:100%;padding:8px 11px}
 .seltools{display:flex;align-items:center;gap:10px;margin:6px 0 12px;font-size:13px;flex-wrap:wrap}
 .seltools input[type=number]{width:64px;padding:6px 8px}
 .seltools .selall{display:flex;align-items:center;gap:7px;font-weight:500}
@@ -213,7 +267,7 @@
 .stp.done{background:var(--ok-soft);color:var(--ok)}
 .stp.lock{background:var(--surface-3);color:var(--text-3)}
 td .btn.sm{white-space:nowrap}
-.lcb{width:16px;height:16px;cursor:pointer;accent-color:var(--accent)}
+.lcb{width:16px;height:16px;cursor:pointer;accent-color:var(--accent);margin:0;flex-shrink:0;vertical-align:middle}
 .contact-em{font-weight:600}
 .contact-sub{font-size:12px;color:var(--text-3)}
 .dontmail{color:var(--text-3);font-size:12px;cursor:pointer;background:none;border:0;padding:4px}
@@ -245,6 +299,22 @@ td .btn.sm{white-space:nowrap}
   {% endif %}
 </div>
 
+{% if actives %}
+<div class="ccbcc">
+  <div class="ccbcc-fields">
+    <div class="ccbcc-f">
+      <label for="ccBox">CC <span class="muted">optional</span></label>
+      <input type="text" id="ccBox" placeholder="teammate@efforti.ai, manager@efforti.ai">
+    </div>
+    <div class="ccbcc-f">
+      <label for="bccBox">BCC <span class="muted">optional</span></label>
+      <input type="text" id="bccBox" placeholder="crm@efforti.ai (hidden from the lead)">
+    </div>
+  </div>
+  <span class="muted" style="font-size:11.5px;line-height:1.5">Applied to every email you send below — single or bulk. CC is visible to the lead; BCC is hidden. Note: on a bulk send, each address gets one copy <em>per selected lead</em>. Separate multiple addresses with commas.</span>
+</div>
+{% endif %}
+
 <div class="seltools">
   <label class="selall"><input type="checkbox" id="selAll" class="lcb"> Select all shown</label>
   <span class="muted">or top</span>
@@ -260,6 +330,7 @@ td .btn.sm{white-space:nowrap}
 <form id="bulkForm" method="post" action="/leads/send_selected" style="display:none">
   <input type="hidden" name="step" id="bulkStep"><input type="hidden" name="ids" id="bulkIds">
   <input type="hidden" name="mailbox_id" id="bulkMb">
+  <input type="hidden" name="cc" id="bulkCc"><input type="hidden" name="bcc" id="bulkBcc">
 </form>
 
 <div class="tbl"><table>
@@ -282,6 +353,7 @@ td .btn.sm{white-space:nowrap}
           {% elif i == pr.next %}<form class="inline" method="post" action="/leads/{{l.id}}/send">
               <input type="hidden" name="step" value="{{i}}">
               <input type="hidden" name="mailbox_id" class="mbfield" value="{{active_mb.id if active_mb else ''}}">
+              <input type="hidden" name="cc" class="ccfield"><input type="hidden" name="bcc" class="bccfield">
               <button class="btn sm">{{pr.action}}</button></form>
           {% else %}<span class="stp lock" title="earlier email must go first">{{step_labels[i]}}</span>{% endif %}
         {% endfor %}
@@ -314,6 +386,16 @@ td .btn.sm{white-space:nowrap}
     Array.prototype.forEach.call(document.querySelectorAll('.mbfield'),function(f){f.value=v;});}
   if(senderMb)senderMb.addEventListener('change',syncMb);
   syncMb();
+  // CC/BCC boxes apply to both the per-row send forms and the bulk send.
+  var ccBox=document.getElementById('ccBox'),bccBox=document.getElementById('bccBox');
+  function ccVal(){return ccBox?ccBox.value:'';}
+  function bccVal(){return bccBox?bccBox.value:'';}
+  function syncCcBcc(){
+    Array.prototype.forEach.call(document.querySelectorAll('.ccfield'),function(f){f.value=ccVal();});
+    Array.prototype.forEach.call(document.querySelectorAll('.bccfield'),function(f){f.value=bccVal();});}
+  if(ccBox)ccBox.addEventListener('input',syncCcBcc);
+  if(bccBox)bccBox.addEventListener('input',syncCcBcc);
+  syncCcBcc();
   function stepText(s){return s==0?'first email':'follow-up '+s;}
   function refresh(){
     var checked=rowboxes().filter(function(b){return b.checked;});
@@ -331,6 +413,8 @@ td .btn.sm{white-space:nowrap}
         document.getElementById('bulkStep').value=s;
         document.getElementById('bulkIds').value=ids;
         document.getElementById('bulkMb').value=mbVal();
+        document.getElementById('bulkCc').value=ccVal();
+        document.getElementById('bulkBcc').value=bccVal();
         document.getElementById('bulkForm').submit();
       };
       btns.appendChild(b);

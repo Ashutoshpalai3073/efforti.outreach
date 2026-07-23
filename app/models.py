@@ -34,6 +34,18 @@ class Mailbox(Base):
     sent_today_date = Column(String, default="")   # YYYY-MM-DD
     bounces_7d = Column(Integer, default=0)
     sends_7d = Column(Integer, default=0)
+    # Signature — Gmail's built-in signature is NOT applied when we send over
+    # SMTP, so we build & append our own branded block per mailbox.
+    signature_on = Column(Boolean, default=True)
+    sig_title = Column(String, default="")         # e.g. "Founder's office"
+    sig_company = Column(String, default="")       # e.g. "Efforti.ai"
+    sig_phone = Column(String, default="")         # e.g. "+91 9348153073"
+    sig_email = Column(String, default="")         # "Email Id" shown; blank = mailbox email
+    logo_b64 = Column(Text, default="")            # inline logo, base64
+    logo_mime = Column(String, default="")         # e.g. "image/png"
+
+    def sig_contact_email(self) -> str:
+        return (self.sig_email or "").strip() or self.email
 
     def effective_cap(self) -> int:
         """Warm-up ramp: start low, add warmup_step per day of age, cap at daily_cap."""
@@ -58,6 +70,8 @@ class Lead(Base):
     trigger = Column(String, default="")           # e.g. "raised seed Mar 2026"
     industry = Column(String, default="")          # from Apollo, feeds personalization
     company_desc = Column(Text, default="")        # short blurb, feeds AI opener
+    company_research = Column(Text, default="")    # live web research, per company, feeds opener
+    researched_at = Column(DateTime)               # when company_research was last refreshed
     opener = Column(Text, default="")              # AI-written first line, per lead
     timezone_offset = Column(Float, default=5.5)   # hours vs UTC; IST default
     status = Column(String, default="new", index=True)
@@ -153,6 +167,42 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 def init_db():
     Base.metadata.create_all(engine)
+    _migrate_sqlite()
+
+
+def _migrate_sqlite():
+    """create_all() never ALTERs an existing table, so on an already-created
+    SQLite DB newly-added columns would be missing. Add any that aren't there
+    yet — a no-op once the DB is up to date."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    adds_by_table = {
+        "mailboxes": {
+            "signature_on": "BOOLEAN DEFAULT 1",
+            "sig_title": "VARCHAR DEFAULT ''",
+            "sig_company": "VARCHAR DEFAULT ''",
+            "sig_phone": "VARCHAR DEFAULT ''",
+            "sig_email": "VARCHAR DEFAULT ''",
+            "logo_b64": "TEXT DEFAULT ''",
+            "logo_mime": "VARCHAR DEFAULT ''",
+        },
+        "leads": {
+            "company_research": "TEXT DEFAULT ''",
+            "researched_at": "DATETIME",
+        },
+    }
+    with engine.begin() as conn:
+        for table, adds in adds_by_table.items():
+            if table not in tables:
+                continue
+            have = {c["name"] for c in insp.get_columns(table)}
+            for name, ddl in adds.items():
+                if name not in have:
+                    conn.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
 def log(db, kind: str, detail: str):

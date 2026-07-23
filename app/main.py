@@ -1,9 +1,20 @@
 """Outreach engine — FastAPI app, server-rendered UI, background scheduler."""
+import base64
 import os
 import random
+import re
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Populate os.environ from a local .env BEFORE any module reads a key. We run
+# under `uvicorn app.main:app` (no --env-file), and nothing else loads .env, so
+# without this the ANTHROPIC_API_KEY in .env never reaches the code and AI
+# openers silently fall back to a generic line. On hosts (Render) real env vars
+# are already set, and load_dotenv() is a harmless no-op there.
+load_dotenv()
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -13,8 +24,10 @@ from sqlalchemy import or_
 
 from .analytics import compute as compute_analytics
 from .apollo import SIZE_PRESETS, preview_apollo, pull_apollo
+from .emailer import signature_preview_html, verify_credentials
 from .enrich import enrich_leads
 from .importer import import_csv
+from .research import research_companies
 from .models import (Enrollment, Event, Lead, Mailbox, Message, SessionLocal,
                      Sequence, SequenceStep, Suppression, init_db, log, utcnow)
 from .scheduler import (due_counts, poll_inboxes, poll_now, process_due_sends,
@@ -268,6 +281,10 @@ def _leads_ctx(request, db, status="", **extra):
                status_filter=status,
                mailbox_count=db.query(Mailbox).filter(Mailbox.active.is_(True)).count(),
                verified_pool=db.query(Lead).filter(Lead.status == "verified").count(),
+               researched_pool=db.query(Lead).filter(
+                   Lead.status.in_(["verified", "enrolled"]),
+                   Lead.company_research != "",
+                   Lead.company_research.isnot(None)).count(),
                **extra)
 
 
@@ -277,9 +294,20 @@ def leads_page(request: Request, status: str = "", pulled: int = 0,
                fetched: int = 0, imported: int = 0, brand_full: int = 0,
                dupe: int = 0, no_email: int = 0, exhausted: int = 0,
                one: str = "", bulk: int = 0, bsent: int = 0, bcapped: int = 0,
-               bskip: int = 0, bnomb: int = 0, bstep: int = -1):
+               bskip: int = 0, bnomb: int = 0, bstep: int = -1,
+               enr: int = 0, provider: str = "", ai: int = 0, fb: int = 0,
+               res: int = 0, companies: int = 0, rleads: int = 0, web: int = 0,
+               noweb: int = 0, rfail: int = 0):
     db = SessionLocal()
     try:
+        enrich_result = None
+        if enr:
+            enrich_result = {"provider": provider, "ai": ai, "fallback": fb}
+        research_result = None
+        if res:
+            research_result = {"provider": provider, "companies": companies,
+                               "leads": rleads, "web": web, "noweb": noweb,
+                               "failed": rfail}
         pull_result = None
         if pulled:
             pull_result = {"brands": brands, "per_brand": per_brand,
@@ -297,7 +325,8 @@ def leads_page(request: Request, status: str = "", pulled: int = 0,
                              "label": _step_label(bstep) if bstep >= 0 else ""}
         return templates.TemplateResponse(request, "leads.html", _leads_ctx(
             request, db, status=status, pull_result=pull_result,
-            send_feedback=send_feedback))
+            send_feedback=send_feedback, enrich_result=enrich_result,
+            research_result=research_result))
     finally:
         db.close()
 
@@ -376,8 +405,27 @@ def enrich(limit: int = Form(500)):
     """Generate an AI-written personalized opener for each verified lead."""
     db = SessionLocal()
     try:
-        enrich_leads(db, limit=limit)
-        return RedirectResponse("/leads", status_code=303)
+        s = enrich_leads(db, limit=limit)
+        return RedirectResponse(
+            f"/leads?enr=1&provider={s['provider']}&ai={s['enriched']}"
+            f"&fb={s['fallback']}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.post("/leads/research")
+def research(limit: int = Form(60), refresh: str = Form("")):
+    """Research each distinct company (deduped by domain) with live web search and
+    cache the briefing on every lead there. Opt-in and cost-capped — this spends
+    API + web-search credits, so it's a separate step from the cheap opener pass."""
+    db = SessionLocal()
+    try:
+        s = research_companies(db, limit=max(1, min(500, limit)),
+                               refresh=(refresh == "on"))
+        return RedirectResponse(
+            f"/leads?res=1&provider={s['provider']}&companies={s['companies']}"
+            f"&rleads={s['leads']}&web={s['web']}&noweb={s['noweb']}"
+            f"&rfail={s['failed']}", status_code=303)
     finally:
         db.close()
 
@@ -419,9 +467,28 @@ def enroll(request: Request, sequence_id: int = Form(...)):
         db.close()
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _parse_addrs(raw: str) -> list:
+    """Turn a free-text CC/BCC box into a clean list of valid addresses.
+    Accepts commas, semicolons, spaces or newlines as separators; silently
+    drops anything that isn't a valid email and de-dupes, keeping order."""
+    if not raw:
+        return []
+    out, seen = [], set()
+    for part in re.split(r"[,;\s]+", raw.strip()):
+        a = part.strip().lower()
+        if a and _EMAIL_RE.match(a) and a not in seen:
+            seen.add(a)
+            out.append(a)
+    return out
+
+
 @app.post("/leads/{lead_id}/send")
 def send_one_lead(request: Request, lead_id: int, step: int = Form(...),
-                  mailbox_id: str = Form("")):
+                  mailbox_id: str = Form(""), cc: str = Form(""),
+                  bcc: str = Form("")):
     """Send one specific email (first email, or a chosen follow-up) to a single
     lead, right now, from the chosen mailbox. Auto-enrolls on the first send.
     (Follow-ups always go from the mailbox that started the thread.)"""
@@ -436,7 +503,8 @@ def send_one_lead(request: Request, lead_id: int, step: int = Form(...),
         enr = _ensure_enrollment(db, lead, mb)
         if not enr:
             return RedirectResponse("/leads?one=no_sequence", status_code=303)
-        result = send_enrollment_step(db, enr, step)
+        result = send_enrollment_step(db, enr, step,
+                                      cc=_parse_addrs(cc), bcc=_parse_addrs(bcc))
         db.commit()
         return RedirectResponse(f"/leads?one={result}", status_code=303)
     finally:
@@ -445,7 +513,8 @@ def send_one_lead(request: Request, lead_id: int, step: int = Form(...),
 
 @app.post("/leads/send_selected")
 def send_selected(request: Request, step: int = Form(...), ids: str = Form(""),
-                  mailbox_id: str = Form("")):
+                  mailbox_id: str = Form(""), cc: str = Form(""),
+                  bcc: str = Form("")):
     """Send ONE step to every selected lead that's ready for it, from the chosen
     mailbox. Because the step is fixed, everyone in a click gets the same email —
     first emails are never mixed with follow-ups. If 'spread across all' is
@@ -454,6 +523,7 @@ def send_selected(request: Request, step: int = Form(...), ids: str = Form(""),
     db = SessionLocal()
     try:
         lead_ids = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+        cc_list, bcc_list = _parse_addrs(cc), _parse_addrs(bcc)
         chosen = _chosen_mailbox(db, mailbox_id)
         actives = (db.query(Mailbox).filter(Mailbox.active.is_(True))
                    .order_by(Mailbox.id).all())
@@ -479,7 +549,7 @@ def send_selected(request: Request, step: int = Form(...), ids: str = Form(""),
             if not enr:
                 c["skipped"] += 1
                 continue
-            r = send_enrollment_step(db, enr, step)
+            r = send_enrollment_step(db, enr, step, cc=cc_list, bcc=bcc_list)
             if r == "sent":
                 c["sent"] += 1
             elif r == "capped":
@@ -588,12 +658,16 @@ def update_step(step_id: int, subject: str = Form(""), body: str = Form(...),
 
 # ---------------- Mailboxes ----------------
 @app.get("/mailboxes", response_class=HTMLResponse)
-def mailboxes_page(request: Request):
+def mailboxes_page(request: Request, mb: str = "", who: str = ""):
     db = SessionLocal()
     try:
         boxes = db.query(Mailbox).all()
+        feedback = {"code": mb, "email": who} if mb else None
+        sig_previews = {b.id: signature_preview_html(b) for b in boxes}
         return templates.TemplateResponse(request, "mailboxes.html",
-                                          ctx(request, db, mailboxes=boxes))
+                                          ctx(request, db, mailboxes=boxes,
+                                              mb_feedback=feedback,
+                                              sig_previews=sig_previews))
     finally:
         db.close()
 
@@ -601,15 +675,28 @@ def mailboxes_page(request: Request):
 @app.post("/mailboxes/add")
 def add_mailbox(email: str = Form(...), display_name: str = Form(""),
                 app_password: str = Form(...), daily_cap: int = Form(25)):
+    """Verify the login actually works before saving — a wrong email or app
+    password is rejected, never stored. Only real, working mailboxes get added."""
     db = SessionLocal()
     try:
-        db.add(Mailbox(email=email.strip().lower(),
-                       display_name=display_name.strip(),
-                       app_password=app_password.strip(),
-                       daily_cap=daily_cap))
-        log(db, "mailbox", f"Added mailbox {email}")
+        email = email.strip().lower()
+        pw = app_password.strip()
+        who = f"&who={email}"
+        if db.query(Mailbox).filter(Mailbox.email == email).first():
+            return RedirectResponse(f"/mailboxes?mb=dup{who}", status_code=303)
+        ok, reason = verify_credentials(email, pw)
+        if not ok:
+            code = "auth" if reason in ("bad_auth", "bad_auth_imap", "missing") \
+                else "conn"
+            log(db, "mailbox", f"Rejected {email}: login check failed ({reason})")
+            db.commit()
+            return RedirectResponse(f"/mailboxes?mb={code}{who}",
+                                    status_code=303)
+        db.add(Mailbox(email=email, display_name=display_name.strip(),
+                       app_password=pw, daily_cap=daily_cap, sig_email=email))
+        log(db, "mailbox", f"Added mailbox {email} (login verified)")
         db.commit()
-        return RedirectResponse("/mailboxes", status_code=303)
+        return RedirectResponse(f"/mailboxes?mb=ok{who}", status_code=303)
     finally:
         db.close()
 
@@ -625,6 +712,50 @@ def toggle_mailbox(mailbox_id: int):
                 mb.paused_reason = ""
             db.commit()
         return RedirectResponse("/mailboxes", status_code=303)
+    finally:
+        db.close()
+
+
+# Logos are embedded inline in every email, so keep them small.
+MAX_LOGO_BYTES = 300_000
+_LOGO_MIMES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
+
+
+@app.post("/mailboxes/{mailbox_id}/signature")
+async def update_signature(mailbox_id: int, signature_on: str = Form(""),
+                           sig_title: str = Form(""), sig_company: str = Form(""),
+                           sig_phone: str = Form(""), sig_email: str = Form(""),
+                           remove_logo: str = Form(""),
+                           logo: UploadFile = File(None)):
+    """Save the branded signature for one mailbox. The logo (optional) is stored
+    inline as base64 so it embeds directly into sent emails — no hosting."""
+    db = SessionLocal()
+    try:
+        mb = db.query(Mailbox).get(mailbox_id)
+        if not mb:
+            return RedirectResponse("/mailboxes", status_code=303)
+        who = f"&who={mb.email}"
+        mb.signature_on = (signature_on == "on")
+        mb.sig_title = sig_title.strip()
+        mb.sig_company = sig_company.strip()
+        mb.sig_phone = sig_phone.strip()
+        mb.sig_email = sig_email.strip()
+        if remove_logo == "on":
+            mb.logo_b64 = ""
+            mb.logo_mime = ""
+        elif logo is not None and logo.filename:
+            if (logo.content_type or "").lower() not in _LOGO_MIMES:
+                return RedirectResponse(f"/mailboxes?mb=logotype{who}",
+                                        status_code=303)
+            data = await logo.read()
+            if len(data) > MAX_LOGO_BYTES:
+                return RedirectResponse(f"/mailboxes?mb=logobig{who}",
+                                        status_code=303)
+            mb.logo_b64 = base64.b64encode(data).decode()
+            mb.logo_mime = (logo.content_type or "image/png").lower()
+        log(db, "mailbox", f"Signature updated for {mb.email}")
+        db.commit()
+        return RedirectResponse(f"/mailboxes?mb=sigok{who}", status_code=303)
     finally:
         db.close()
 

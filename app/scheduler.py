@@ -157,7 +157,8 @@ def send_due_now():
         db.close()
 
 
-def send_enrollment_step(db, enr, step_index, respect_cap=True):
+def send_enrollment_step(db, enr, step_index, respect_cap=True,
+                         cc=None, bcc=None):
     """Send ONE specific step for one enrollment, right now. This powers the
     per-lead 'Send first email' / 'Send follow-up N' buttons and the
     'send to selected' action. Returns a short status string:
@@ -188,7 +189,8 @@ def send_enrollment_step(db, enr, step_index, respect_cap=True):
     if respect_cap and mailbox.sent_today >= mailbox.effective_cap():
         return "capped"
     step = steps[step_index]
-    if not send(db, mailbox, lead, enr, step.subject, step.body, step_index):
+    if not send(db, mailbox, lead, enr, step.subject, step.body, step_index,
+                cc=cc, bcc=bcc):
         return "failed"
     mailbox.sent_today += 1
     mailbox.sends_7d += 1

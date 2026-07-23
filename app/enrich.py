@@ -51,6 +51,11 @@ def _prompt(lead: Lead) -> str:
         facts.append(f"Recent signal: {lead.trigger}")
     if lead.company_desc:
         facts.append(f"About the company: {lead.company_desc}")
+    research = (getattr(lead, "company_research", "") or "").strip()
+    if research:
+        facts.append(
+            "Live research (current & specific — PREFER a concrete detail from "
+            f"here for the opener):\n{research}")
     return "Prospect facts:\n" + "\n".join(facts) + "\n\nWrite the opening line."
 
 
